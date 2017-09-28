@@ -6,61 +6,60 @@ Introduce
 This project is an QQ bot.
 With it you may roll dice and do simple calculate with simple commands in QQ.
 
-This project is an plugin for CoolQ.
+This project is an plug-in for CoolQ.
 To use the application, at least a CoolQ Air program is required.
-You may get it for free at its official website.
-https://cqp.cc
+You may get it for free at its [official website](https://cqp.cc).
 
-This project is built based on CoolQ C++ SDK. 
-https://github.com/CoolQ/cqsdk-vc
+This project is built based on [CoolQ C++ SDK](https://github.com/CoolQ/cqsdk-vc). 
 
-Thanks to the note from 铮铮卡穆 in CoolQ community.
-https://cqp.cc/t/28730
+Thanks to the note from [铮铮卡穆](https://cqp.cc/t/28730) in CoolQ community.
+
 
 Document
 --------
-`.r {expression} {?reason} {?DC}`
-
+*	`.r {expression} {?reason} {?DC}`
+	
 	For example:
-	`.r 2d6+1 sanlose 5`
+	`.r 2d6+1 SanLose 5`
 	Bot may response:
-	`你对sanlose检定骰出(5)+1=6, DC:5`
-	or`You got (5+3)+1=9 for sanlose, DC:5`
-
-	In expression, you can use four arithmetic operations, brackets, and most
-	importantly the dice operator `d`.
-
+	`你对SanLose检定骰出(5+3)+1=9, DC:5`
+	or`You got (5+3)+1=9 for SanLose, DC:5`
+	
+	In expression, you can use four arithmetic operations, brackets, and most importantly the dice operator `d`.
+	
 	`d` has two parameter which both can be omitted. 
-	The number before `d` is the quantity of dices ( defaultly 1 ).
-	The number after `d` is the faces of dices ( defaultly 100 ).
-
+	The number before `d` is the quantity of dices ( default 1 ).
+	The number after `d` is the faces of dices ( default 100 ).
+	
 	All dices will be showed in response.
-
+	
 	`d` has an higher priority than brackets, for the sake of clear convey.
 	That means `d` should be directly connected with its parameter.
 	
-	Further more, you can add reward dice or punishment dice to d100
-	according to CoC v7.
+	Further more, you can add reward dice or punishment dice to d100 according to CoC v7.
 	`d^100` means a reward dice and `d__100` means two punishment dice and so on.
-
-`.h {expression} {?reason} {?DC}`
 	
-	Almostly the same as `.r`, except that it's a hiden rolling.
+*	`.h {expression} {?reason} {?DC}`
+		
+	Almost the same as `.r`, except that it's a hidden rolling.
 	Use `.h` in group, and result will be privately informed.
-
-`.c {expression}` (Will be soon realized)
-
+	
+*	`.c {expression}`
+	
 	Just calculate mode.
-	Use it as an convinient calculater.
-	Dice operator not recommanded in this mode, but of cause you can use it.
-
-`.build {version} {name}` (Will be soon realized)
-
+	Use it as an convenient calculator.
+	Dice operator not recommended in this mode, but of course you can use it.
+	
+*	`.luck
+	Test your luck today.
+	
+*	`.build {version} {name}` (Will be soon realized)
+	
 	`.build CoC7 Jack` will build a random character based on CoC V7 rule called Jack.
 	`.build CoC6 Jack` will build a CoC V6 one.
-	Other version may be added or not.
+	Other version may be added sometime or not.
 
-Prospection
+TODO
 --------
 A log function will be added at version 1.1.0.
 You will be able to get a pretty log when you play TRPG with friends in QQ group.

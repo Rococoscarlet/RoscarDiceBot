@@ -13,14 +13,16 @@ using namespace std;
 
 double calD(char* arg, string &p);
 void rollDice(list<double> &number, list<char> &ope, list<string> &output, list<string> &dices);
+void luck(int64_t qq, string &p);
 
 int ac = -1; //AuthCode 调用酷Q的方法时需要用到
 bool enabled = false;
-std::random_device rd;
-std::mt19937 e(rd());
-const double EPS = 1e-6;
-int maxDice = 2000;
-int maxSides = 10000;
+
+std::random_device rd; //随机
+std::mt19937 e(rd()); //随机方法
+const double EPS = 1e-6; //double精度
+int maxDice = 2000;	//最大骰子数
+int maxSides = 10000; //骰子最大面数
 
 char BASE64DecodeChar[] = {
 	0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
@@ -31,9 +33,23 @@ char BASE64DecodeChar[] = {
 	15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 0, 0, 0, 0, 0,
 	0, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40,
 	41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 0, 0, 0, 0, 0
-};
-const char* HELP = ".r {表达式} {鉴定类型(可选)} {DC(可选)}\n   投掷骰子，支持四则运算与括号\n   例如：.r 3d6+d4 伤害 \n   d两侧参数不填时，分别默认为1与100\n   支持coc七版规则奖励骰惩罚骰\n   d^代表一个奖励骰，d__代表两个惩罚骰\n   以此类推，仅对百面骰生效\n.h {表达式} {鉴定类型(可选)} {DC(可选)}\n   暗骰，使用方法同.r，结果会私信通知。";
+}; //base64转换表
 
+LCID lcid = GetSystemDefaultLCID();//系统语言
+
+#define EN 1
+#define CN 0
+
+int lang = CN;
+
+void i18n(int setlang){
+	lang = setlang;
+}
+
+
+const char* HELP[] = { ".r {表达式} {鉴定类型(可选)} {DC(可选)}\n   投掷骰子，支持四则运算与括号\n   例如：.r 3d6+d4 伤害 \n   d两侧参数不填时，分别默认为1与100\n   支持coc七版规则奖励骰惩罚骰\n   d^代表一个奖励骰，d__代表两个惩罚骰\n   以此类推，仅对百面骰生效\n.s {表达式} {鉴定类型(可选)} {DC(可选)}\n   暗骰，使用方法同.r，结果会私信通知。\n.c {表达式}\n   计算功能，仅返回结果" ,""};
+
+//CQP陌生人数据格式
 struct CQPStrangerInfo{
 	long long int qq;
 	string nick;
@@ -41,6 +57,7 @@ struct CQPStrangerInfo{
 	int age;
 };
 
+//将base64转为2进制数据
 void* base64Decode(char* s, void * result){
 	for (int i = 0; i < strlen(s); i += 4){
 		((char*)result)[i / 4 * 3] = (BASE64DecodeChar[s[i]] << 2) + (BASE64DecodeChar[s[i + 1]] >> 4);
@@ -50,10 +67,12 @@ void* base64Decode(char* s, void * result){
 	return result;
 }
 
+//从base64中解码陌生人数据
 CQPStrangerInfo decodeStranger(char* s){
 	CQPStrangerInfo stranger;
 	void * result = new char[strlen(s) / 4 * 3];
 	unsigned char* a = (unsigned char*)base64Decode(s, result);
+	//这里由于不确定编译器是大端小端，故不采取直接将字节填入的方法
 	long long int qq = a[0] * 256 * 256 * 256 * 256 * 256 * 256 * 256 + a[1] * 256 * 256 * 256 * 256 * 256 * 256 + a[2] * 256 * 256 * 256 * 256 * 256 + a[3] * 256 * 256 * 256 * 256 + a[4] * 256 * 256 * 256 + a[5] * 256 * 256 + a[6] * 256 + a[7];
 	stranger.qq = qq;
 	short nicklen = a[8] * 256 + a[9];
@@ -113,6 +132,15 @@ CQEVENT(int32_t, __eventExit, 0)() {
 */
 CQEVENT(int32_t, __eventEnable, 0)() {
 	enabled = true;
+	
+	if (lcid == 0x404 || lcid == 0x804)
+	{
+		i18n(CN);
+	}
+	else
+	{
+		i18n(EN);
+	}
 	return 0;
 }
 
@@ -150,9 +178,10 @@ CQEVENT(int32_t, __eventPrivateMsg, 24)(int32_t subType, int32_t sendTime, int64
 				tokenPtr = strtok_s(NULL, " ", &nextToken);
 			}
 			if (strcmp(args.front(), "?") == 0 || strcmp(args.front(), "help") == 0){
-				res.append(HELP);
+				res.append(HELP[lang]);
 			}
-			else if (strcmp(args.front(),"r") == 0){
+			else if (strcmp(args.front(), "r") == 0){
+				string val;
 				args.pop_front();
 				if (!args.empty()){
 					string p;
@@ -163,7 +192,7 @@ CQEVENT(int32_t, __eventPrivateMsg, 24)(int32_t subType, int32_t sendTime, int64
 						delete msgc;
 						return EVENT_BLOCK;
 					}
-					res.append(p);
+					val.append(p);
 					args.pop_front();
 				}
 				else{
@@ -176,18 +205,60 @@ CQEVENT(int32_t, __eventPrivateMsg, 24)(int32_t subType, int32_t sendTime, int64
 						delete msgc;
 						return EVENT_BLOCK;
 					}
-					res.append(p);
+					val.append(p);
+					
 				}
+				res.append(val);
 				if (!args.empty()){
-					string res2 = "你对";
-					res2 += args.front();
-					res = res2 + "检定骰出了" + res;
+					if (lang == CN){
+						
+						res = "你对";
+						res += args.front();
+						res += "检定骰出了";
+						res += val;
+					}
+					else if (lang == EN){
+						res = "You got ";
+						res += val;
+						res += " for ";
+						res += args.front();
+					}
 					args.pop_front();
 				}
 				if (!args.empty()){
-					res.append("，DC: ");
+					res.append(", DC: ");
 					res.append(args.front());
 					args.pop_front();
+				}
+			}
+			else if (strcmp(args.front(), "luck") == 0){
+				luck(fromQQ, res);
+			}
+			else if (strcmp(args.front(), "c") == 0){
+				args.pop_front();
+				if (!args.empty()){
+					string p;
+					double result;
+					try{
+						result = calD(args.front(), p);
+					}
+					catch (const char* e){
+						CQ_sendPrivateMsg(ac, fromQQ, e);
+						delete msgc;
+						return EVENT_BLOCK;
+					}
+					if (result - floor(result) < EPS){
+						p = (to_string((int)floor(result)));
+					}
+					else{
+						p = (to_string(result));
+						while (p.back() == '0') p.pop_back();
+					}
+					res.append(p);
+					args.pop_front();
+				}
+				else{
+					res.append("No Expression");
 				}
 			}
 			delete msgc;
@@ -223,10 +294,11 @@ CQEVENT(int32_t, __eventGroupMsg, 36)(int32_t subType, int32_t sendTime, int64_t
 				tokenPtr = strtok_s(NULL, " ", &nextToken);
 			}
 			if (strcmp(args.front(), "?") == 0 || strcmp(args.front(), "help") == 0){
-				res.append(HELP);
+				res.append(HELP[lang]);
 			}
-			else if (strcmp(args.front(), "r") == 0){
+			else if (strcmp(args.front(), "r") == 0 || strcmp(args.front(), "roll") == 0){
 				args.pop_front();
+				string val;
 				if (!args.empty()){
 					string p;
 					try{
@@ -237,7 +309,7 @@ CQEVENT(int32_t, __eventGroupMsg, 36)(int32_t subType, int32_t sendTime, int64_t
 						delete msgc;
 						return EVENT_BLOCK;
 					}
-					res.append(p);
+					val.append(p);
 					args.pop_front();
 				}
 				else{
@@ -250,25 +322,29 @@ CQEVENT(int32_t, __eventGroupMsg, 36)(int32_t subType, int32_t sendTime, int64_t
 						delete msgc;
 						return EVENT_BLOCK;
 					}
-					res.append(p);
+					val.append(p);
 				}
+				res.append(val);
 				if (!args.empty()){
-					string res2 = at;
-					res2.append("对");
-					res2 += args.front();
-					res = res2 + "检定骰出了" + res;
+					if (lang == CN){
+						res = at + "对" + args.front() + "检定骰出了" + val;
+					}
+					else if (lang == EN){
+						res = at + " got " + val + " for " + args.front();
+					}
 					args.pop_front();
 				}
 				else{
 					res.insert(0, at);
 				}
 				if (!args.empty()){
-					res.append("，DC: ");
+					res.append(", DC: ");
 					res.append(args.front());
 					args.pop_front();
 				}
 			}
-			else if (strcmp(args.front(), "h") == 0){
+			else if (strcmp(args.front(), "s") == 0){
+				string val;
 				args.pop_front();
 				if (!args.empty()){
 					string p;
@@ -280,7 +356,7 @@ CQEVENT(int32_t, __eventGroupMsg, 36)(int32_t subType, int32_t sendTime, int64_t
 						delete msgc;
 						return EVENT_BLOCK;
 					}
-					res.append(p);
+					val.append(p);
 					args.pop_front();
 				}
 				else{
@@ -293,12 +369,22 @@ CQEVENT(int32_t, __eventGroupMsg, 36)(int32_t subType, int32_t sendTime, int64_t
 						delete msgc;
 						return EVENT_BLOCK;
 					}
-					res.append(p);
+					val.append(p);
 				}
+				res.append(val);
 				if (!args.empty()){
-					string res2 = "你对";
-					res2 += args.front();
-					res = res2 + "检定骰出了" + res;
+					if (lang == CN){
+						res = "你对";
+						res += args.front();
+						res += "检定骰出了";
+						res += val;
+					}
+					else if (lang == EN){
+						res = "You got ";
+						res += val;
+						res += " for ";
+						res += args.front();
+					}
 					args.pop_front();
 				}
 				if (!args.empty()){
@@ -308,7 +394,47 @@ CQEVENT(int32_t, __eventGroupMsg, 36)(int32_t subType, int32_t sendTime, int64_t
 				}
 				CQ_sendPrivateMsg(ac, fromQQ, res.data());
 				res = at;
-				res.append("进行了暗骰");
+				if (lang == CN){
+					res.append("进行了暗骰");
+				}
+				else if (lang == EN){
+					res.append(" roll a dice secretly.");
+				}
+			}
+			else if (strcmp(args.front(), "c") == 0){
+				args.pop_front();
+				if (!args.empty()){
+					string p;
+					double result;
+					try{
+						result = calD(args.front(), p);
+					}
+					catch (const char* e){
+						CQ_sendGroupMsg(ac, fromGroup, e);
+						delete msgc;
+						return EVENT_BLOCK;
+					}
+					if (result - floor(result) < EPS){
+						p = (to_string((int)floor(result)));
+					}
+					else{
+						p = (to_string(result));
+						while (p.back() == '0') p.pop_back();
+					}
+					res.append(p);
+					args.pop_front();
+				}
+				else{
+					res.append("No Expression");
+				}
+			}
+			else if (strcmp(args.front(), "luck") == 0){
+				res.append(at);
+				luck(fromQQ, res);
+			}
+			else if (strcmp(args.front(), "build") == 0){
+				args.pop_front();
+				
 			}
 			delete msgc;
 		}
@@ -395,7 +521,7 @@ double calD(char* arg, string &p){
 							pin++;
 							continue;
 						}
-						else if ((arg[pin] != '(') != (arg[pin - 1] != ')')){
+						else if ((arg[pin] == '(') && (arg[pin - 1] == ')') || (arg[pin] != '(') && (arg[pin - 1] != ')')){
 							throw "Syntax Error";
 							return 1;
 						}
@@ -776,5 +902,96 @@ void rollDice(list<double> &number,list<char> &ope,list<string> &output,list<str
 		dice.append(")");
 		dices.push_back(dice);
 		number.push_back(rnum);
+	}
+}
+
+void randomCoC7(string &p){
+	std::uniform_int_distribution<int> dist(1, 6);
+	int str = dist(e) + dist(e) + dist(e);
+	
+
+}
+
+void bar(string &p, int num){
+
+}
+
+void luck(int64_t qq, string &p){
+	MD5 iMD5;
+	const time_t t = time(NULL);
+	struct tm* current_time = localtime(&t);
+	struct toMd5{
+		int64_t qq;
+		int tm_year;
+		int tm_day;
+	};
+	toMd5 * td5 = new toMd5();
+	td5->qq = qq;
+	td5->tm_year = current_time->tm_year;
+	td5->tm_day = current_time->tm_yday;
+	unsigned char * cd5 = (unsigned char*)td5;
+	iMD5.GenerateMD5(cd5,16);
+	int luckPer = iMD5.m_data[3] % 101 + 1;
+	if (lang == CN){
+		p.append("今天你的运势分数是：");
+	}
+	else if (lang == EN){
+		p.append("Your luck percent today:");
+	}
+	for (int i = 0; i < luckPer / 10; i++){
+		p.append("█");
+	}
+	switch (luckPer % 10){
+	case 0:
+		break;
+	case 1:
+	case 2:
+		p.append("▏");
+		break;
+	case 3:
+		p.append("▎");
+		break;
+	case 4:
+		p.append("▍");
+		break;
+	case 5:
+		p.append("▌");
+		break;
+	case 6:
+	case 7:
+		p.append("▋");
+		break;
+	case 8:
+	case 9:
+		p.append("▊");
+		break;
+	default:break;
+	}
+	p.append(to_string(luckPer));
+	switch (luckPer / 10){
+	case 0:
+		p.append("大凶");
+		break;
+	case 1:
+	case 2:
+		p.append("中凶");
+		break;
+	case 3:
+	case 4:
+		p.append("小凶");
+		break;
+	case 5:
+	case 6:
+		p.append("小吉");
+		break;
+	case 7:
+	case 8:
+		p.append("中吉");
+		break;
+	case 9:
+	case 10:
+		p.append("大吉");
+		break;
+	default:break;
 	}
 }

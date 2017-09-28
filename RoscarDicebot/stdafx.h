@@ -18,7 +18,12 @@
 #include "string"
 
 #include "Wincrypt.h"
+#include "Md5.h"
+#include "time.h"
 
 #include "assert.h"
 #include <random>
 #include <list>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
