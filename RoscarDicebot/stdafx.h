@@ -22,8 +22,10 @@
 #include "time.h"
 
 #include "assert.h"
+#include <mutex>
 #include <random>
 #include <list>
+#include <map>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>

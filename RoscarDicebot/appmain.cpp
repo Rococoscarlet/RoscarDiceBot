@@ -14,15 +14,23 @@ using namespace std;
 double calD(char* arg, string &p);
 void rollDice(list<double> &number, list<char> &ope, list<string> &output, list<string> &dices);
 void luck(int64_t qq, string &p);
+void opeInit();
+void opesdel();
 
 int ac = -1; //AuthCode 调用酷Q的方法时需要用到
 bool enabled = false;
 
 std::random_device rd; //随机
 std::mt19937 e(rd()); //随机方法
+std::mutex calLock;
 const double EPS = 1e-6; //double精度
-int maxDice = 2000;	//最大骰子数
+int maxDice = 100;	//最大骰子数
 int maxSides = 10000; //骰子最大面数
+
+class calNode;
+class ope;
+
+map<char, ope*> opes;
 
 char BASE64DecodeChar[] = {
 	0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
@@ -47,7 +55,9 @@ void i18n(int setlang){
 }
 
 
-const char* HELP[] = { ".r {表达式} {鉴定类型(可选)} {DC(可选)}\n   投掷骰子，支持四则运算与括号\n   例如：.r 3d6+d4 伤害 \n   d两侧参数不填时，分别默认为1与100\n   支持coc七版规则奖励骰惩罚骰\n   d^代表一个奖励骰，d__代表两个惩罚骰\n   以此类推，仅对百面骰生效\n.s {表达式} {鉴定类型(可选)} {DC(可选)}\n   暗骰，使用方法同.r，结果会私信通知。\n.c {表达式}\n   计算功能，仅返回结果" ,""};
+const char* HELP[] = { ".r {表达式} {鉴定类型(可选)} {DC(可选)}\n   投掷骰子，支持四则运算与括号\n   例如：.r 3d6+d4 伤害 \n   d两侧参数不填时，分别默认为1与100\n   支持coc七版规则奖励骰惩罚骰\n   d^代表一个奖励骰，d__代表两个惩罚骰\n   以此类推，仅对百面骰生效\n.h {表达式} {鉴定类型(可选)} {DC(可选)}\n   暗骰，使用方法同.r，结果会私信通知。\n.c {表达式}\n   计算功能，仅返回结果\n.luck\n   获得今日老黄历" ,""};
+
+const char* LUCK[][2] = { {"诸事皆宜：天然20自动成功！","诸事不宜：骰娘恨你"} ,{ "开团：传奇由此开始", "开团：听取咕声一片" }, { "长团再开：重拾旧时的回忆", "长团再开：上回说到哪来着？" }, { "新建角色卡：属性全是18", "新建角色卡：造出的角色厄运缠身" }, { "写模组：文思泉涌", "写模组：不小心在第一页写上了最终boss是谁" }, { "侦查：黑暗视觉，无所畏惧", "侦查：我看到你们了......吗？" }, { "隐蔽：根据相关法律法规和政策，部分潜行调查员未予显示。", "隐蔽：你藏的挺好的...直到被别人踩了一脚叫出声来。" }, { "说服NPC：唬骗！唬骗！唬骗！", "说服NPC：我觉得你挺可疑的。" }, { "掀桌：破坏模组结构是一种艺术", "掀桌：你的卡可能会被撕，还有你的，还有你的……" }, { "踢门：开门！自由贸易！", "踢门：脚疼" }, { "解谜：现实灵感大成功", "解谜：会把KP急死" }, { "粉红展开：噫~", "粉红展开：吁~" }, { "SAN CHECK：IT'S A GOOD DAY TO DIE", "SAN CHECK：角色没事，PL先疯了" }, { "基础值判定：图书馆失败了，非要在俄语上大成功有什么用啊！", "判定熟练技能：飞龙骑脸怎么输！" }, { "卖队友：在朋友和撬棍中，我选择周杰伦老师。", "卖队友：你才是被卖的那一个" }, { "立FLAG：即便如此，我们也...!", "立FLAG：等我干完这一票，我就回老家结婚。" }, { "保守秘密：到模组结束也没人发现", "保守秘密：你刚才想悄悄告诉我啥来着你再大声点说一遍？" }, { "分头行动：探索效率翻倍", "分头行动：才不要和你们这些疯子待在一起！我要一个人走！" }, { "逃跑：这叫战略转进", "逃跑：后面其实更危险" }, { "孤注一掷：这就是我最后的波纹了！JOJO！", "孤注一掷：作死才能推动剧情发展，剧情确实发展了，但不是你想的那样。" }, { "安利新人：新人入坑比你还深", "安利新人：“都多大了还玩这个？”" } };
 
 //CQP陌生人数据格式
 struct CQPStrangerInfo{
@@ -56,6 +66,17 @@ struct CQPStrangerInfo{
 	int sex;
 	int age;
 };
+
+int ranInt(int min, int max){
+	std::uniform_int_distribution<int> dist(min, max);
+	return dist(e);
+}
+
+template <class T>
+int getArrayLen(T& array)
+{
+	return (sizeof(array) / sizeof(array[0]));
+}
 
 //将base64转为2进制数据
 void* base64Decode(char* s, void * result){
@@ -111,6 +132,7 @@ CQEVENT(int32_t, Initialize, 4)(int32_t AuthCode) {
 * 如非必要，不建议在这里加载窗口。（可以添加菜单，让用户手动打开窗口）
 */
 CQEVENT(int32_t, __eventStartup, 0)() {
+	opeInit();
 	return 0;
 }
 
@@ -121,6 +143,7 @@ CQEVENT(int32_t, __eventStartup, 0)() {
 * 本函数调用完毕后，酷Q将很快关闭，请不要再通过线程等方式执行其他代码。
 */
 CQEVENT(int32_t, __eventExit, 0)() {
+	opesdel();
 	return 0;
 }
 
@@ -182,11 +205,12 @@ CQEVENT(int32_t, __eventPrivateMsg, 24)(int32_t subType, int32_t sendTime, int64
 			}
 			else if (strcmp(args.front(), "r") == 0){
 				string val;
+				double result = 0;
 				args.pop_front();
 				if (!args.empty()){
 					string p;
 					try{
-						calD(args.front(), p);
+						result = calD(args.front(), p);
 					} catch (const char* e){
 						CQ_sendPrivateMsg(ac, fromQQ, e);
 						delete msgc;
@@ -198,7 +222,7 @@ CQEVENT(int32_t, __eventPrivateMsg, 24)(int32_t subType, int32_t sendTime, int64
 				else{
 					string p;
 					try{
-						calD("d", p);
+						result = calD("d", p);
 					}
 					catch (const char* e){
 						CQ_sendPrivateMsg(ac, fromQQ, e);
@@ -228,6 +252,69 @@ CQEVENT(int32_t, __eventPrivateMsg, 24)(int32_t subType, int32_t sendTime, int64
 				if (!args.empty()){
 					res.append(", DC: ");
 					res.append(args.front());
+					double dc = 0;
+					bool isnum = true;
+					try{
+						dc = stod(args.front());
+					}
+					catch (invalid_argument e){
+						isnum = false;
+					}
+					if (isnum){
+						if (result == 1){
+							res.append("大成功"); 
+						}
+						else if (result < dc / 5){
+							res.append("极难成功");
+						}
+						else if (result < dc / 2){
+							res.append("困难成功");
+						}
+						else if (result < dc){
+							res.append("成功");
+						}
+						else{
+							if (dc < 20){
+								if (result >= 96){
+									res.append("大失败");
+								}else{
+									res.append("失败");
+								}
+							}
+							else if (dc < 30){
+								if (result >= 97){
+									res.append("大失败");
+								}
+								else{
+									res.append("失败");
+								}
+							}
+							else if (dc < 40){
+								if (result >= 98){
+									res.append("大失败");
+								}
+								else{
+									res.append("失败");
+								}
+							}
+							else if (dc < 50){
+								if (result >= 99){
+									res.append("大失败");
+								}
+								else{
+									res.append("失败");
+								}
+							}
+							else{
+								if (result == 100){
+									res.append("大失败");
+								}
+								else{
+									res.append("失败");
+								}
+							}
+						}
+					}
 					args.pop_front();
 				}
 			}
@@ -299,10 +386,11 @@ CQEVENT(int32_t, __eventGroupMsg, 36)(int32_t subType, int32_t sendTime, int64_t
 			else if (strcmp(args.front(), "r") == 0 || strcmp(args.front(), "roll") == 0){
 				args.pop_front();
 				string val;
+				double result = 0;
 				if (!args.empty()){
 					string p;
 					try{
-						calD(args.front(), p);
+						result = calD(args.front(), p);
 					}
 					catch (const char* e){
 						CQ_sendGroupMsg(ac, fromGroup, e);
@@ -315,7 +403,7 @@ CQEVENT(int32_t, __eventGroupMsg, 36)(int32_t subType, int32_t sendTime, int64_t
 				else{
 					string p;
 					try{
-						calD("d", p);
+						result = calD("d", p);
 					}
 					catch (const char* e){
 						CQ_sendGroupMsg(ac, fromGroup, e);
@@ -340,16 +428,81 @@ CQEVENT(int32_t, __eventGroupMsg, 36)(int32_t subType, int32_t sendTime, int64_t
 				if (!args.empty()){
 					res.append(", DC: ");
 					res.append(args.front());
+					double dc = 0;
+					bool isnum = true;
+					try{
+						dc = stod(args.front());
+					}
+					catch (invalid_argument e){
+						isnum = false;
+					}
+					if (isnum){
+						if (result == 1){
+							res.append("大成功");
+						}
+						else if (result < dc / 5){
+							res.append("极难成功");
+						}
+						else if (result < dc / 5){
+							res.append("困难成功");
+						}
+						else if (result < dc){
+							res.append("成功");
+						}
+						else{
+							if (dc < 20){
+								if (result >= 96){
+									res.append("大失败");
+								}
+								else{
+									res.append("失败");
+								}
+							}
+							else if (dc < 30){
+								if (result >= 97){
+									res.append("大失败");
+								}
+								else{
+									res.append("失败");
+								}
+							}
+							else if (dc < 40){
+								if (result >= 98){
+									res.append("大失败");
+								}
+								else{
+									res.append("失败");
+								}
+							}
+							else if (dc < 50){
+								if (result >= 99){
+									res.append("大失败");
+								}
+								else{
+									res.append("失败");
+								}
+							}
+							else{
+								if (result == 100){
+									res.append("大失败");
+								}
+								else{
+									res.append("失败");
+								}
+							}
+						}
+					}
 					args.pop_front();
 				}
 			}
-			else if (strcmp(args.front(), "s") == 0){
+			else if (strcmp(args.front(), "h") == 0){
 				string val;
 				args.pop_front();
+				double result = 0;
 				if (!args.empty()){
 					string p;
 					try{
-						calD(args.front(), p);
+						result = calD(args.front(), p);
 					}
 					catch (const char* e){
 						CQ_sendGroupMsg(ac, fromGroup, e);
@@ -362,7 +515,7 @@ CQEVENT(int32_t, __eventGroupMsg, 36)(int32_t subType, int32_t sendTime, int64_t
 				else{
 					string p;
 					try{
-						calD("d", p);
+						result = calD("d", p);
 					}
 					catch (const char* e){
 						CQ_sendGroupMsg(ac, fromGroup, e);
@@ -390,6 +543,70 @@ CQEVENT(int32_t, __eventGroupMsg, 36)(int32_t subType, int32_t sendTime, int64_t
 				if (!args.empty()){
 					res.append("，DC: ");
 					res.append(args.front());
+					double dc = 0;
+					bool isnum = true;
+					try{
+						dc = stod(args.front());
+					}
+					catch (invalid_argument e){
+						isnum = false;
+					}
+					if (isnum){
+						if (result == 1){
+							res.append("大成功");
+						}
+						else if (result < dc/5){
+							res.append("极难成功");
+						}
+						else if (result < dc/2){
+							res.append("困难成功");
+						}
+						else if (result < dc){
+							res.append("成功");
+						}
+						else{
+							if (dc < 20){
+								if (result >= 96){
+									res.append("大失败");
+								}
+								else{
+									res.append("失败");
+								}
+							}
+							else if (dc < 30){
+								if (result >= 97){
+									res.append("大失败");
+								}
+								else{
+									res.append("失败");
+								}
+							}
+							else if (dc < 40){
+								if (result >= 98){
+									res.append("大失败");
+								}
+								else{
+									res.append("失败");
+								}
+							}
+							else if (dc < 50){
+								if (result >= 99){
+									res.append("大失败");
+								}
+								else{
+									res.append("失败");
+								}
+							}
+							else{
+								if (result == 100){
+									res.append("大失败");
+								}
+								else{
+									res.append("失败");
+								}
+							}
+						}
+					}
 					args.pop_front();
 				}
 				CQ_sendPrivateMsg(ac, fromQQ, res.data());
@@ -449,7 +666,303 @@ CQEVENT(int32_t, __eventGroupMsg, 36)(int32_t subType, int32_t sendTime, int64_t
 * Type=4 讨论组消息
 */
 CQEVENT(int32_t, __eventDiscussMsg, 32)(int32_t subType, int32_t sendTime, int64_t fromDiscuss, int64_t fromQQ, const char *msg, int32_t font) {
+	if (msg[0] == '.'){
+		string res;
+		string at;
+		at.append("[CQ:at,qq=");
+		char * qq = new char[32];
+		sprintf(qq, "%lld", fromQQ);
+		at.append(qq);
+		delete qq;
+		at.append("]");
+		if (strlen(msg) > 1){
+			char *msgc = new char[strlen(msg)];
+			strcpy(msgc, msg + 1);
+			list<char*> args;
+			char *nextToken;
+			char *tokenPtr = strtok_s(msgc, " ", &nextToken);
+			while (tokenPtr != NULL){
+				args.push_back(tokenPtr);
+				tokenPtr = strtok_s(NULL, " ", &nextToken);
+			}
+			if (strcmp(args.front(), "?") == 0 || strcmp(args.front(), "help") == 0){
+				res.append(HELP[lang]);
+			}
+			else if (strcmp(args.front(), "r") == 0 || strcmp(args.front(), "roll") == 0){
+				args.pop_front();
+				string val;
+				double result = 0;
+				if (!args.empty()){
+					string p;
+					try{
+						result = calD(args.front(), p);
+					}
+					catch (const char* e){
+						CQ_sendDiscussMsg(ac, fromDiscuss, e);
+						delete msgc;
+						return EVENT_BLOCK;
+					}
+					val.append(p);
+					args.pop_front();
+				}
+				else{
+					string p;
+					try{
+						result = calD("d", p);
+					}
+					catch (const char* e){
+						CQ_sendDiscussMsg(ac, fromDiscuss, e);
+						delete msgc;
+						return EVENT_BLOCK;
+					}
+					val.append(p);
+				}
+				res.append(val);
+				if (!args.empty()){
+					if (lang == CN){
+						res = at + "对" + args.front() + "检定骰出了" + val;
+					}
+					else if (lang == EN){
+						res = at + " got " + val + " for " + args.front();
+					}
+					args.pop_front();
+				}
+				else{
+					res.insert(0, at);
+				}
+				if (!args.empty()){
+					res.append(", DC: ");
+					res.append(args.front());
+					double dc = 0;
+					bool isnum = true;
+					try{
+						dc = stod(args.front());
+					}
+					catch (invalid_argument e){
+						isnum = false;
+					}
+					if (isnum){
+						if (result == 1){
+							res.append("大成功");
+						}
+						else if (result < dc / 5){
+							res.append("极难成功");
+						}
+						else if (result < dc / 5){
+							res.append("困难成功");
+						}
+						else if (result < dc){
+							res.append("成功");
+						}
+						else{
+							if (dc < 20){
+								if (result >= 96){
+									res.append("大失败");
+								}
+								else{
+									res.append("失败");
+								}
+							}
+							else if (dc < 30){
+								if (result >= 97){
+									res.append("大失败");
+								}
+								else{
+									res.append("失败");
+								}
+							}
+							else if (dc < 40){
+								if (result >= 98){
+									res.append("大失败");
+								}
+								else{
+									res.append("失败");
+								}
+							}
+							else if (dc < 50){
+								if (result >= 99){
+									res.append("大失败");
+								}
+								else{
+									res.append("失败");
+								}
+							}
+							else{
+								if (result == 100){
+									res.append("大失败");
+								}
+								else{
+									res.append("失败");
+								}
+							}
+						}
+					}
+					args.pop_front();
+				}
+			}
+			else if (strcmp(args.front(), "h") == 0){
+				string val;
+				args.pop_front();
+				double result = 0;
+				if (!args.empty()){
+					string p;
+					try{
+						result = calD(args.front(), p);
+					}
+					catch (const char* e){
+						CQ_sendDiscussMsg(ac, fromDiscuss, e);
+						delete msgc;
+						return EVENT_BLOCK;
+					}
+					val.append(p);
+					args.pop_front();
+				}
+				else{
+					string p;
+					try{
+						result = calD("d", p);
+					}
+					catch (const char* e){
+						CQ_sendDiscussMsg(ac, fromDiscuss, e);
+						delete msgc;
+						return EVENT_BLOCK;
+					}
+					val.append(p);
+				}
+				res.append(val);
+				if (!args.empty()){
+					if (lang == CN){
+						res = "你对";
+						res += args.front();
+						res += "检定骰出了";
+						res += val;
+					}
+					else if (lang == EN){
+						res = "You got ";
+						res += val;
+						res += " for ";
+						res += args.front();
+					}
+					args.pop_front();
+				}
+				if (!args.empty()){
+					res.append("，DC: ");
+					res.append(args.front());
+					double dc = 0;
+					bool isnum = true;
+					try{
+						dc = stod(args.front());
+					}
+					catch (invalid_argument e){
+						isnum = false;
+					}
+					if (isnum){
+						if (result == 1){
+							res.append("大成功");
+						}
+						else if (result < dc / 5){
+							res.append("极难成功");
+						}
+						else if (result < dc / 2){
+							res.append("困难成功");
+						}
+						else if (result < dc){
+							res.append("成功");
+						}
+						else{
+							if (dc < 20){
+								if (result >= 96){
+									res.append("大失败");
+								}
+								else{
+									res.append("失败");
+								}
+							}
+							else if (dc < 30){
+								if (result >= 97){
+									res.append("大失败");
+								}
+								else{
+									res.append("失败");
+								}
+							}
+							else if (dc < 40){
+								if (result >= 98){
+									res.append("大失败");
+								}
+								else{
+									res.append("失败");
+								}
+							}
+							else if (dc < 50){
+								if (result >= 99){
+									res.append("大失败");
+								}
+								else{
+									res.append("失败");
+								}
+							}
+							else{
+								if (result == 100){
+									res.append("大失败");
+								}
+								else{
+									res.append("失败");
+								}
+							}
+						}
+					}
+					args.pop_front();
+				}
+				CQ_sendPrivateMsg(ac, fromQQ, res.data());
+				res = at;
+				if (lang == CN){
+					res.append("进行了暗骰");
+				}
+				else if (lang == EN){
+					res.append(" roll a dice secretly.");
+				}
+			}
+			else if (strcmp(args.front(), "c") == 0){
+				args.pop_front();
+				if (!args.empty()){
+					string p;
+					double result;
+					try{
+						result = calD(args.front(), p);
+					}
+					catch (const char* e){
+						CQ_sendDiscussMsg(ac, fromDiscuss, e);
+						delete msgc;
+						return EVENT_BLOCK;
+					}
+					if (result - floor(result) < EPS){
+						p = (to_string((int)floor(result)));
+					}
+					else{
+						p = (to_string(result));
+						while (p.back() == '0') p.pop_back();
+					}
+					res.append(p);
+					args.pop_front();
+				}
+				else{
+					res.append("No Expression");
+				}
+			}
+			else if (strcmp(args.front(), "luck") == 0){
+				res.append(at);
+				luck(fromQQ, res);
+			}
+			else if (strcmp(args.front(), "build") == 0){
+				args.pop_front();
 
+			}
+			delete msgc;
+		}
+		CQ_sendDiscussMsg(ac, fromDiscuss, res.data());
+		return EVENT_BLOCK;
+	}
 	return EVENT_IGNORE; //关于返回值说明, 见“_eventPrivateMsg”函数
 }
 
@@ -481,467 +994,414 @@ CQEVENT(int32_t, __eventRequest_AddGroup, 32)(int32_t subType, int32_t sendTime,
 	return EVENT_IGNORE; //关于返回值说明, 见“_eventPrivateMsg”函数
 }
 
-/*
-* 计算一个表达式
-*/
-double calD(char* arg, string &p){
-	int pin = 0;
-	int len = strlen(arg);
-	list<double> number;
-	list<char> ope;
-	string num;
-	list<string> output;
-	list<string> dices;
-	while (pin < len){
-		if (arg[pin] != '0' && arg[pin] != '1' && arg[pin] != '2' && arg[pin] != '3' && arg[pin] != '4' && arg[pin] != '5' && arg[pin] != '6' && arg[pin] != '7'&& arg[pin] != '8' && arg[pin] != '9' && arg[pin] != '.'){
-			if (num.length() == 0){
-				if (arg[pin] == 'd'){
-					if (!ope.empty()){
-						if (ope.back() == 'd'){
-							throw "Syntax Error";
-							return 1;
-						}
-					}
-					number.push_back(1);
-					output.push_back(to_string(1));
+
+class ope{
+public:
+	const char opename;
+	const int ad; //优先级
+	void(*cal)(calNode*);
+	(calNode*)(*btree)(calNode*);
+	bool rUnary;
+	bool lUnary;
+};
+
+class calNode{
+public:
+	calNode* parent = NULL;
+	calNode* leftChild = NULL;
+	calNode* rightChild = NULL;
+	int ap = 0;
+	string expression = "";
+	ope * ope = NULL;
+	double num = 0;
+	void calculate(){
+		if (ope != NULL){
+			if (leftChild != NULL) leftChild->calculate();
+			if (rightChild != NULL) rightChild->calculate();
+			ope->cal(this);
+			if (parent != NULL){
+				if ((this == parent->leftChild && ope->ad < parent->ope->ad) || (this == parent->rightChild && ope->ad <= parent->ope->ad)){
+					expression = "(" + expression + ")";
 				}
-				else{
-					if (!ope.empty()){
-						if (ope.back() == 'd'){
-							if (arg[pin] == '('){
-								throw "Syntax Error";
-								return 1;
-							}
-							number.push_back(100);
-							output.push_back(to_string(100));
-						}
-						else if(arg[pin] == '-'){
-							ope.push_back('n');
-							output.push_back("-");
-							pin++;
-							continue;
-						}
-						else if ((arg[pin] == '(') && (arg[pin - 1] == ')') || (arg[pin] != '(') && (arg[pin - 1] != ')')){
-							throw "Syntax Error";
-							return 1;
-						}
-					}
-					else if (pin != 0){
-						if (arg[pin - 1] != ')'){
-							if (arg[pin] == '-'){
-								ope.push_back('n');
-								output.push_back("-");
-								pin++;
-								continue;
-							}
-							else if (arg[pin] != '('){
-								throw "Syntax Error";
-								return 1;
-							}
-						}
-						else if (arg[pin] == '('){
-							throw "Syntax Error";
-							return 1;
-						}
-					}
-					else{
-						if (arg[pin] == '-'){
-							ope.push_back('n');
-							output.push_back("-");
-							pin++;
-							continue;
-						}
-						else if (arg[pin] != '('){
-							throw "Syntax Error";
-							return 1;
-						}
-					}
-				}
+			}
+			ope = NULL;
+		}
+		else{
+			if (num - floor(num) < EPS){
+				if (num > INT_MAX || num < INT_MIN) throw "Out of Range";
+				expression = to_string((int)num);
 			}
 			else{
-				double dnum = 0;
-				try{
-					dnum = stod(num);
-				}
-				catch (invalid_argument e){
-					throw "NaN Error";
-					return 1;
-				}
-				number.push_back(dnum);
-				num.clear();
-				string s = to_string(dnum);
-				while (s.back() == '0') s.pop_back();
-				if (s.back() == '.') s.pop_back();
-				output.push_back(s);
+				expression = to_string(num);
+				while (expression.back() == '0') expression.pop_back();
 			}
-			if (arg[pin] == 'd'){
-				int add = 0;
-				while (arg[pin + 1] == '^' || arg[pin + 1] == '_'){
-					pin++;
-					if (arg[pin] == '^'){
-						add++;
-					}
-					else if (arg[pin] == '_'){
-						add--;
-					}
-				}
-				number.push_back(add);
-				output.push_back(to_string(add));
-				ope.push_back('d');
-				output.push_back("d");
-			}
-			else if (arg[pin] == '('){
-				ope.push_back('(');
-				output.push_back("(");
-			}
-			else if (arg[pin] == ')'){
-				output.push_back(")");
-				if (!ope.empty()){
-					while (!ope.empty() && ope.back() != '('){
-						if (ope.back() == '+'){
-							ope.pop_back();
-							double a = number.back();
-							number.pop_back();
-							double b = number.back();
-							number.pop_back();
-							number.push_back(a + b);
-						}
-						else if (ope.back() == '-'){
-							ope.pop_back();
-							double a = number.back();
-							number.pop_back();
-							double b = number.back();
-							number.pop_back();
-							number.push_back(b - a);
-						}
-						else if (ope.back() == '*'){
-							ope.pop_back();
-							double a = number.back();
-							number.pop_back();
-							double b = number.back();
-							number.pop_back();
-							number.push_back(b * a);
-						}
-						else if (ope.back() == '/'){
-							ope.pop_back();
-							double a = number.back();
-							if (a == 0){
-								throw "Divide By Zero Error";
-								return 1;
-							}
-							number.pop_back();
-							double b = number.back();
-							number.pop_back();
-							number.push_back(b / a);
-						}
-						else if (ope.back() == 'd'){
-							rollDice(number, ope, output, dices);
-						}
-						else if (ope.back() == 'n'){
-							ope.pop_back();
-							double a = number.back();
-							number.pop_back();
-							number.push_back(-a);
-						}
-					}
-				}
-				if (!ope.empty()){
-					if (ope.back() == '('){
-						ope.pop_back();
-					}
-				}
-			}
-			else if (arg[pin] == '*' || arg[pin] == '/'){
-				string s;
-				s.push_back(arg[pin]);
-				output.push_back(s);
-				if (!ope.empty()){
-					while (!ope.empty() && (ope.back() == 'd' || ope.back() == 'n')){
-						if (ope.back() == 'd'){
-							rollDice(number, ope, output, dices);
-						}
-						else if (ope.back() == 'n'){
-							ope.pop_back();
-							double a = number.back();
-							number.pop_back();
-							number.push_back(-a);
-						}
-					}
-				}
-				ope.push_back(arg[pin]);
-			}
-			else if (arg[pin] == '+' || arg[pin] == '-'){
-				string s;
-				s.push_back(arg[pin]);
-				output.push_back(s);
-				if (!ope.empty()){
-					while (!ope.empty() && (ope.back() == 'd' || ope.back() == 'n' || ope.back() == '*' || ope.back() == '/')){
-						if (ope.back() == 'd'){
-							rollDice(number, ope, output, dices);
-						}
-						else if (ope.back() == 'n'){
-							ope.pop_back();
-							double a = number.back();
-							number.pop_back();
-							number.push_back(-a);
-						}
-						else if (ope.back() == '*'){
-							ope.pop_back();
-							double a = number.back();
-							number.pop_back();
-							double b = number.back();
-							number.pop_back();
-							number.push_back(b * a);
-						}
-						else if (ope.back() == '/'){
-							ope.pop_back();
-							double a = number.back();
-							if (a == 0){
-								throw "Divide By Zero Error";
-								return 1;
-							}
-							number.pop_back();
-							double b = number.back();
-							number.pop_back();
-							number.push_back(b / a);
-						}
-					}
-				}
-				ope.push_back(arg[pin]);
-			}
+		}
+	}
+	void del(){
+		if (leftChild != NULL){
+			leftChild->del();
+			delete leftChild;
+			leftChild = NULL;
+		}
+		if (rightChild != NULL){
+			rightChild->del();
+			delete rightChild;
+			rightChild = NULL;
+		}
+	}
+};
+
+
+void opeInit(){
+	opes['r'] = new ope{ 'r', 1, [](calNode* node)->void{
+		if (node->rightChild == NULL) throw "Syntax Error";
+		node->num = node->rightChild->num;
+		node->expression = node->rightChild->expression;
+	}, [](calNode* node)->calNode*{
+		return NULL;
+	} };
+	opes['+'] = new ope{ '+', 2, [](calNode* node)->void{
+		if (node->rightChild == NULL || node->leftChild == NULL) throw "Syntax Error";
+		node->num = node->leftChild->num + node->rightChild->num;
+		node->expression = node->leftChild->expression + "+" + node->rightChild->expression;
+	}, [](calNode* node)->calNode*{
+		if (node->parent == NULL) throw "Syntax Error";
+		calNode* newnode = new calNode();
+		newnode->leftChild = node;
+		newnode->parent = node->parent;
+		node->parent->rightChild = newnode;
+		newnode->ope = opes['+'];
+		node->parent = newnode;
+		return newnode;
+	},false,false };
+	opes['-'] = new ope{ '-', 2, [](calNode* node)->void{
+		if (node->rightChild == NULL) throw "Syntax Error";
+		if (node->leftChild != NULL){
+			node->num = node->leftChild->num - node->rightChild->num;
+			node->expression = node->leftChild->expression + "-" + node->rightChild->expression;
 		}
 		else{
-			num.push_back(arg[pin]);
+			node->num = -node->rightChild->num;
+			node->expression = "-" + node->rightChild->expression;
 		}
-		pin++;
-	}
-	if(num.length() != 0){
-		double dnum = 0;
-		try{
-			dnum = stod(num);
+	}, [](calNode* node)->calNode*{
+		if (node->ope == NULL || !opes['-']->rUnary){
+			if (node->parent == NULL) throw "Syntax Error";
+			calNode* newnode = new calNode();
+			newnode->leftChild = node;
+			newnode->parent = node->parent;
+			node->parent->rightChild = newnode;
+			newnode->ope = opes['-'];
+			node->parent = newnode;
+			return newnode;
 		}
-		catch (invalid_argument e){
-			throw "NaN Error";
-			return 1;
-		}
-		number.push_back(dnum);
-		num.clear();
-		string s;
-		s = to_string(dnum);
-		while (s.back() == '0') s.pop_back();
-		if (s.back() == '.') s.pop_back();
-		output.push_back(s);
-	}else if (!ope.empty()){
-		if (ope.back() == 'd'){
-			number.push_back(100);
-			output.push_back(to_string(100));
-		}
-	}
-	while (!ope.empty()){
-		if (ope.back() == 'd'){
-			rollDice(number, ope, output, dices);
-		}
-		else if (ope.back() == 'n'){
-			ope.pop_back();
-			double a = number.back();
-			number.pop_back();
-			number.push_back(-a);
-		}
-		else if (ope.back() == '*'){
-			ope.pop_back();
-			double a = number.back();
-			number.pop_back();
-			double b = number.back();
-			number.pop_back();
-			number.push_back(b * a);
-		}
-		else if (ope.back() == '/'){
-			ope.pop_back();
-			double a = number.back();
-			if (a == 0){
-				throw "Divide By Zero Error";
-				return 1;
-			}
-			number.pop_back();
-			double b = number.back();
-			number.pop_back();
-			number.push_back(b / a);
-		}
-		else if (ope.back() == '+'){
-			ope.pop_back();
-			double a = number.back();
-			number.pop_back();
-			double b = number.back();
-			number.pop_back();
-			number.push_back(a + b);
-		}
-		else if (ope.back() == '-'){
-			ope.pop_back();
-			double a = number.back();
-			number.pop_back();
-			double b = number.back();
-			number.pop_back();
-			number.push_back(b - a);
-		}
-	}
-	string outt;
-	list<string> output2;
-	while (!output.empty()){
-		if (output.front().compare("d") == 0){
-			output2.pop_back();
-			output2.pop_back();
-			output2.push_back(dices.front());
-			dices.pop_front();
-			output.pop_front();
-			output.pop_front();
+		else if (node->rightChild != NULL || node->ope->lUnary){
+			if (node->parent == NULL) throw "Syntax Error";
+			calNode* newnode = new calNode();
+			newnode->leftChild = node;
+			newnode->parent = node->parent;
+			node->parent->rightChild = newnode;
+			newnode->ope = opes['-'];
+			node->parent = newnode;
+			return newnode;
 		}
 		else{
-			output2.push_back(output.front());
-			output.pop_front();
+			calNode* newnode = new calNode();
+			node->rightChild = newnode;
+			newnode->parent = node;
+			newnode->ope = opes['-'];
+			return newnode;
 		}
-	}
-	while (!output2.empty()){
-		outt += output2.front();
-		output2.pop_front();
-	}
-	p = outt; 
-	p.append("=");
-	if (number.back() - floor(number.back()) < EPS){
-		p.append(to_string((int)floor(number.back())));
-	}
-	else{
-		p.append(to_string(number.back()));
-		while (p.back() == '0') p.pop_back();
-	}
-	return number.back();
+	}, true,false };
+	opes['*'] = new ope{ '*', 4, [](calNode* node)->void{
+		if (node->rightChild == NULL || node->leftChild == NULL) throw "Syntax Error";
+		node->num = node->leftChild->num * node->rightChild->num;
+		node->expression = node->leftChild->expression + "*" + node->rightChild->expression;
+	}, [](calNode* node)->calNode*{
+		if (node->parent == NULL) throw "Syntax Error";
+		calNode* newnode = new calNode();
+		newnode->leftChild = node;
+		newnode->parent = node->parent;
+		node->parent->rightChild = newnode;
+		newnode->ope = opes['*'];
+		node->parent = newnode;
+		return newnode;
+	}, false, false };
+	opes['/'] = new ope{ '/', 4, [](calNode* node)->void{
+		if (node->rightChild == NULL || node->leftChild == NULL) throw "Syntax Error";
+		if (node->rightChild->num != 0) node->num = node->leftChild->num / node->rightChild->num; else throw "Divided By 0";
+		node->expression = node->leftChild->expression + "/" + node->rightChild->expression;
+	}, [](calNode* node)->calNode*{
+		if (node->parent == NULL) throw "Syntax Error";
+		calNode* newnode = new calNode();
+		newnode->leftChild = node;
+		newnode->parent = node->parent;
+		node->parent->rightChild = newnode;
+		newnode->ope = opes['/'];
+		node->parent = newnode;
+		return newnode;
+	}, false, false };
+	opes['d'] = new ope{ 'd', 5, [](calNode* node)->void{
+		int left = 1;
+		int right = 100;
+		if (node->leftChild != NULL) left = (int)floor(node->leftChild->num);
+		if (node->rightChild != NULL) right = (int)floor(node->rightChild->num);
+		if (left <= 0 || left > maxDice)throw "Wrong Dice Number";
+		if (right <= 0 || right > maxSides)throw "Wrong Sides Number";
+		if (right != 100 && node->ap != 0)throw "Wrong Bonus or Penalty Dice";
+		if (right != 100 || node->ap == 0){
+			double rnum = 0;
+			node->expression.append("(");
+			for (int i = 0; i < left; i++){
+				int rdice = ranInt(1,right);
+				node->expression.append(to_string(rdice));
+				rnum += rdice;
+				node->expression.append("+");
+			}
+			node->expression.pop_back();
+			node->expression.append(")");
+			node->num = rnum;
+		}
+		else if (node->ap > 0){
+			double rnum = 0;
+			node->expression.append("(");
+			for (int i = 0; i < left; i++){
+				int num2 = ranInt(0,9);
+				int num1 = 11;
+				node->expression.append("min(");
+				for (int j = 0; j < node->ap + 1; j++){
+					int tnum1 = ranInt(0, 9);
+					if (tnum1 == 0 && num2 == 0) tnum1 = 10;
+					if (tnum1 < num1) num1 = tnum1;
+					node->expression.append(to_string(tnum1 * 10));
+					node->expression.append(",");
+				}
+				node->expression.pop_back();
+				node->expression.append(")+");
+				node->expression.append(to_string(num2));
+				rnum += (10 * num1 + num2);
+				node->expression.append("+");
+			}
+			node->expression.pop_back();
+			node->expression.append(")");
+			node->num = rnum;
+		}
+		else if (node->ap < 0){
+			double rnum = 0;
+			node->expression.append("(");
+			for (int i = 0; i < left; i++){
+				int num2 = ranInt(0, 9);
+				int num1 = -1;
+				node->expression.append("max(");
+				for (int j = 0; j < -node->ap + 1; j++){
+					int tnum1 = ranInt(0, 9);
+					if (tnum1 == 0 && num2 == 0) tnum1 = 10;
+					if (tnum1 > num1) num1 = tnum1;
+					node->expression.append(to_string(tnum1 * 10));
+					node->expression.append(",");
+				}
+				node->expression.pop_back();
+				node->expression.append(")+");
+				node->expression.append(to_string(num2));
+				rnum += (10 * num1 + num2);
+				node->expression.append("+");
+			}
+			node->expression.pop_back();
+			node->expression.append(")");
+			node->num = rnum;
+		}
+	}, [](calNode* node)->calNode*{
+		if (node->ope == NULL || !opes['d']->rUnary){
+			if (node->parent == NULL) throw "Syntax Error";
+			calNode* newnode = new calNode();
+			newnode->leftChild = node;
+			newnode->parent = node->parent;
+			node->parent->rightChild = newnode;
+			newnode->ope = opes['d'];
+			node->parent = newnode;
+			return newnode;
+		}
+		else if (node->rightChild != NULL || node->ope->lUnary){
+			if (node->parent == NULL) throw "Syntax Error";
+			calNode* newnode = new calNode();
+			newnode->leftChild = node;
+			newnode->parent = node->parent;
+			node->parent->rightChild = newnode;
+			newnode->ope = opes['d'];
+			node->parent = newnode;
+			return newnode;
+		}
+		else{
+			calNode* newnode = new calNode();
+			node->rightChild = newnode;
+			newnode->parent = node;
+			newnode->ope = opes['d'];
+			return newnode;
+		}
+	}, true, true };
+	opes['^'] = new ope{ '^', 0, [](calNode* node)->void{assert(false); }, [](calNode* node)->calNode*{
+		if (node->ope != opes['d'] || node->rightChild != NULL) throw "Syntax Error";
+		node->ap++;
+		return node;
+	}, false, false };
+	opes['_'] = new ope{ '_', 0, [](calNode* node)->void{assert(false); }, [](calNode* node)->calNode*{
+		if (node->ope != opes['d'] || node->rightChild != NULL) throw "Syntax Error";
+		node->ap--;
+		return node;
+	}, false, false };
+	opes['('] = new ope{ '(', 0, [](calNode* node)->void{assert(false); }, [](calNode* node)->calNode*{
+		if (node->rightChild != NULL) throw "Syntax Error";
+		calNode* newnode = new calNode();
+		newnode->ope = opes['('];
+		newnode->parent = node;
+		node->rightChild = newnode;
+		return newnode;
+	}, false, false };
+	opes[')'] = new ope{ ')', 0, [](calNode* node)->void{assert(false); }, [](calNode* node)->calNode*{
+		if (node->ope == opes['('] && node->rightChild == NULL) throw "Syntax Error";
+		while (node->ope != opes['(']){
+			if (node->parent == NULL) throw "Syntax Error";
+			node = node->parent;
+		}
+		assert(node->leftChild == NULL);
+		node->parent->rightChild = node->rightChild;
+		node->rightChild->parent = node->parent;
+		calNode* temp = node;
+		node = node->parent;
+		delete temp;
+		temp = NULL;
+		return node;
+	}, false, false };
 }
 
-/*
-*计算一个骰子
-*/
-void rollDice(list<double> &number,list<char> &ope,list<string> &output,list<string> &dices){
-	string dice;
-	ope.pop_back();
-	int a = floor(number.back());
-	if (a <= 0 || a > maxSides){
-		throw "Wrong Sides Number";
-		return;
+void opesdel(){
+	while (!opes.empty()){
+		delete (opes.begin()->second);
+		opes.erase(opes.begin());
 	}
-	number.pop_back();
-	int b = floor(number.back());
-	number.pop_back();
-	int c = floor(number.back());
-	if (c <= 0 || c > maxDice){
-		throw "Wrong Dice Number";
-		return;
-	}
-	number.pop_back();
-	if (a != 100 || b == 0){
-		std::uniform_int_distribution<int> dist(1, a);
-		double rnum = 0;
-		dice.append("(");
-		for (int i = 0; i < c; i++){
-			int rdice = dist(e);
-			dice.append(to_string(rdice));
-			rnum += rdice;
-			dice.append("+");
-		}
-		dice.pop_back();
-		dice.append(")");
-		dices.push_back(dice);
-		number.push_back(rnum);
-	}
-	else if (b > 0){
-		std::uniform_int_distribution<int> dist(0, 9);
-		double rnum = 0;
-		dice.append("(");
-		for (int i = 0; i < c; i++){
-			int num2 = dist(e);
-			int num1 = 11;
-			dice.append("min(");
-			for (int j = 0; j < b + 1; j++){
-				int tnum1 = dist(e);
-				if (tnum1 == 0 && num2 == 0) tnum1 = 10;
-				if (tnum1 < num1) num1 = tnum1;
-				dice.append(to_string(tnum1 * 10));
-				dice.append(",");
+}
+
+double calD(char* arg, string &p){
+	calNode* root = new calNode();
+	root->ope = opes['r'];
+	calNode* nodePin = root;
+	bool isNum = false;
+	string numstall;
+	try{
+		calLock.lock();
+		for (int i = 0; i < strlen(arg); i++){
+			switch (arg[i]){
+			case '0':
+			case '1':
+			case '2':
+			case '3':
+			case '4':
+			case '5':
+			case '6':
+			case '7':
+			case '8':
+			case '9':
+			case '.':
+				numstall.push_back(arg[i]);
+				break;
+			default:
+				if (opes.count(arg[i]) == 0) throw "Syntax Error";
+				if (numstall.length() != 0){
+					double dnum = 0;
+					try{
+						dnum = stod(numstall);
+					}
+					catch (invalid_argument e){
+						throw "NaN Error";
+						return 1;
+					}
+					if (nodePin->rightChild != NULL) throw "Syntax Error";
+					calNode* newNode = new calNode();
+					nodePin->rightChild = newNode;
+					newNode->parent = nodePin;
+					newNode->num = dnum;
+					numstall.clear();
+				}
+				do{
+
+					if (opes[arg[i]]->ad * nodePin->ope->ad > opes[arg[i]]->ad * opes[arg[i]]->ad){
+						assert(nodePin->parent != NULL);
+						nodePin = nodePin->parent;
+					}
+					if (opes[arg[i]]->ad * nodePin->ope->ad < opes[arg[i]]->ad * opes[arg[i]]->ad){
+						if (nodePin->rightChild == NULL){
+							if (nodePin->ope->lUnary || opes[arg[i]]->rUnary){
+								nodePin = opes[arg[i]]->btree(nodePin);
+							}
+							else throw "Syntax Error";
+						}
+						else{
+							bool temp = opes[arg[i]]->rUnary;
+							opes[arg[i]]->rUnary = false;
+							nodePin = opes[arg[i]]->btree(nodePin->rightChild);
+							opes[arg[i]]->rUnary = temp;
+						}
+					}
+					else if (opes[arg[i]]->ad * nodePin->ope->ad == opes[arg[i]]->ad * opes[arg[i]]->ad){
+						nodePin = opes[arg[i]]->btree(nodePin);
+					}
+				} while (opes[arg[i]]->ad * nodePin->ope->ad > opes[arg[i]]->ad * opes[arg[i]]->ad);
+				break;
 			}
-			dice.pop_back();
-			dice.append(")+");
-			dice.append(to_string(num2));
-			rnum += (10 * num1 + num2);
-			dice.append("+");
 		}
-		dice.pop_back();
-		dice.append(")");
-		dices.push_back(dice);
-		number.push_back(rnum);
-	}
-	else if (b < 0){
-		std::uniform_int_distribution<int> dist(0, 9);
-		double rnum = 0;
-		dice.append("(");
-		for (int i = 0; i < c; i++){
-			int num2 = dist(e);
-			int num1 = -1;
-			dice.append("max(");
-			for (int j = 0; j < -b + 1; j++){
-				int tnum1 = dist(e);
-				if (tnum1 == 0 && num2 == 0) tnum1 = 10;
-				if (tnum1 > num1) num1 = tnum1;
-				dice.append(to_string(tnum1 * 10));
-				dice.append(",");
+		if (numstall.length() != 0){
+			double dnum = 0;
+			try{
+				dnum = stod(numstall);
 			}
-			dice.pop_back();
-			dice.append(")+");
-			dice.append(to_string(num2));
-			rnum += (10 * num1 + num2);
-			dice.append("+");
+			catch (invalid_argument e){
+				throw "NaN Error";
+				return 1;
+			}
+
+			if (nodePin->rightChild != NULL) throw "Syntax Error";
+			calNode* newNode = new calNode();
+			nodePin->rightChild = newNode;
+			newNode->parent = nodePin;
+			newNode->num = dnum;
+			numstall.clear();
 		}
-		dice.pop_back();
-		dice.append(")");
-		dices.push_back(dice);
-		number.push_back(rnum);
+		root->calculate();
+		calLock.unlock();
 	}
+	catch (const char* e){
+		calLock.unlock();
+		root->del();
+		delete root;
+		throw e;
+	}
+	double result = root->num;
+	p.append(root->expression);
+	root->del();
+	delete root;
+	if (result - floor(result) < EPS){
+		if (result > INT_MAX || result < INT_MIN) throw "Out of Range";
+		p.append("=" + to_string((int)result));
+	}
+	else{
+		p.append("=" + to_string(result));
+		while (p.back() == '0') p.pop_back();
+	}
+	return result;
 }
 
 void randomCoC7(string &p){
-	std::uniform_int_distribution<int> dist(1, 6);
-	int str = dist(e) + dist(e) + dist(e);
+	int str = (ranInt(1, 6) + ranInt(1, 6) + ranInt(1, 6))*5;
+
 	
 
 }
 
 void bar(string &p, int num){
-
-}
-
-void luck(int64_t qq, string &p){
-	MD5 iMD5;
-	const time_t t = time(NULL);
-	struct tm* current_time = localtime(&t);
-	struct toMd5{
-		int64_t qq;
-		int tm_year;
-		int tm_day;
-	};
-	toMd5 * td5 = new toMd5();
-	td5->qq = qq;
-	td5->tm_year = current_time->tm_year;
-	td5->tm_day = current_time->tm_yday;
-	unsigned char * cd5 = (unsigned char*)td5;
-	iMD5.GenerateMD5(cd5,16);
-	int luckPer = iMD5.m_data[3] % 101 + 1;
-	if (lang == CN){
-		p.append("今天你的运势分数是：");
-	}
-	else if (lang == EN){
-		p.append("Your luck percent today:");
-	}
-	for (int i = 0; i < luckPer / 10; i++){
+	for (int i = 0; i < num / 10; i++){
 		p.append("█");
 	}
-	switch (luckPer % 10){
+	switch (num % 10){
 	case 0:
 		break;
 	case 1:
@@ -967,6 +1427,34 @@ void luck(int64_t qq, string &p){
 		break;
 	default:break;
 	}
+}
+
+void luck(int64_t qq, string &p){
+	MD5 iMD5;
+	const time_t t = time(NULL);
+	struct tm* current_time = localtime(&t);
+	struct toMd5P{
+		int64_t qq;
+		int tm_year;
+		int tm_day;
+	};
+	toMd5P * td5 = new toMd5P();
+	td5->qq = qq;
+	td5->tm_year = current_time->tm_year;
+	td5->tm_day = current_time->tm_yday;
+	unsigned char * cd5 = (unsigned char*)td5;
+	iMD5.GenerateMD5(cd5,16);
+	delete td5;
+	cd5 = NULL;
+	td5 = NULL;
+	int luckPer = iMD5.m_data[3] % 100 + 1;
+	if (lang == CN){
+		p.append("今天你的运势指数是：");
+	}
+	else if (lang == EN){
+		p.append("Your luck today:");
+	}
+	bar(p, luckPer);
 	p.append(to_string(luckPer));
 	switch (luckPer / 10){
 	case 0:
@@ -994,4 +1482,71 @@ void luck(int64_t qq, string &p){
 		break;
 	default:break;
 	}
+	int klen = getArrayLen(LUCK) - 1;
+	struct toMd5D{
+		int tm_year;
+		int tm_day;
+	};
+	toMd5D * tdd5 = new toMd5D();
+	tdd5->tm_year = current_time->tm_year;
+	tdd5->tm_day = current_time->tm_yday;
+	unsigned char * cdd5 = (unsigned char*)tdd5;
+	iMD5.GenerateMD5(cdd5, 8);
+	delete tdd5;
+	cdd5 = NULL;
+	tdd5 = NULL;
+	vector<unsigned long> num;
+	num.push_back(iMD5.m_data[0]);
+	num.push_back(iMD5.m_data[1]);
+	num.push_back(iMD5.m_data[2]);
+	num.push_back(iMD5.m_data[3]);
+	long l = iMD5.m_data[3];
+	while (num.size() < klen){
+		iMD5.GenerateMD5((unsigned char*)(&l), 4);
+		num.push_back(iMD5.m_data[0]);
+		num.push_back(iMD5.m_data[1]);
+		num.push_back(iMD5.m_data[2]);
+		num.push_back(iMD5.m_data[3]);
+		l = iMD5.m_data[3];
+	}
+	vector<const char*> good;
+	vector<const char*> bad;
+	double range = 100 / (double)klen * 2;
+	for (int i = 0; i < klen; i++){
+		if ((double)num[i] / ULONG_MAX * 100 + (luckPer - 50) * range / 50 > 100 - range){
+			good.push_back(LUCK[i + 1][0]);
+		}
+		if ((double)num[i] / ULONG_MAX * 100 + (luckPer - 50) * range / 50 < range){
+			bad.push_back(LUCK[i + 1][1]);
+		}
+	}
+	if (good.size() > 6){
+		p.append("\n");
+		p.append(LUCK[0][0]);
+	}
+	else if (bad.size() > 6){
+		p.append("\n");
+		p.append(LUCK[0][1]);
+	}
+	else{
+		p.append("\n宜：");
+		for (int i = 0; i < good.size(); i++){
+			p.append("\n");
+			p.append(good[i]);
+		}
+		if (good.size() == 0){
+			p.append("\n");
+			p.append("无");
+		}
+		p.append("\n忌：");
+		for (int i = 0; i < bad.size(); i++){
+			p.append("\n");
+			p.append(bad[i]);
+		}
+		if (bad.size() == 0){
+			p.append("\n");
+			p.append("无");
+		}
+	}
+
 }

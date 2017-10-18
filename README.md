@@ -33,11 +33,8 @@ Document
 	
 	All dices will be showed in response.
 	
-	`d` has an higher priority than brackets, for the sake of clear convey.
-	That means `d` should be directly connected with its parameter.
-	
-	Further more, you can add reward dice or punishment dice to d100 according to CoC v7.
-	`d^100` means a reward dice and `d__100` means two punishment dice and so on.
+	Further more, you can add bonus dice or penalty dice to d100 according to CoC v7.
+	`d^100` means a bonus dice and `d__100` means two penalty dice and so on.
 	
 *	`.h {expression} {?reason} {?DC}`
 		
@@ -50,7 +47,7 @@ Document
 	Use it as an convenient calculator.
 	Dice operator not recommended in this mode, but of course you can use it.
 	
-*	`.luck
+*	`.luck`
 	Test your luck today.
 	
 *	`.build {version} {name}` (Will be soon realized)
