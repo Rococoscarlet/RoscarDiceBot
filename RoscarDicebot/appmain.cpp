@@ -12,7 +12,6 @@
 using namespace std;
 
 double calD(char* arg, string &p);
-void rollDice(list<double> &number, list<char> &ope, list<string> &output, list<string> &dices);
 void luck(int64_t qq, string &p);
 void opeInit();
 void opesdel();
@@ -26,6 +25,18 @@ std::mutex calLock;
 const double EPS = 1e-6; //double精度
 int maxDice = 100;	//最大骰子数
 int maxSides = 10000; //骰子最大面数
+const boost::asio::ip::address server_address = boost::asio::ip::address::from_string("127.0.0.1");
+const unsigned short server_port = 8085;
+
+string addCommand(redisclient::RedisSyncClient &redis, int64_t fromGroup, string command, list<string> options);
+string delCommand(redisclient::RedisSyncClient &redis, int64_t fromGroup, string command);
+string addOption(redisclient::RedisSyncClient &redis, int64_t fromGroup, string command, list<string> options);
+string delOption(redisclient::RedisSyncClient &redis, int64_t fromGroup, string command, int index);
+string setOption(redisclient::RedisSyncClient &redis, int64_t fromGroup, string command, int index, string option);
+string getRandomOption(redisclient::RedisSyncClient &redis, int64_t fromGroup, string command);
+vector<string> showAllOption(redisclient::RedisSyncClient &redis, int64_t fromGroup, string command);
+vector<string> showAllCommand(redisclient::RedisSyncClient &redis, int64_t fromGroup);
+string randomCommand(int64_t fromGroup, list<char*> args1);
 
 class calNode;
 class ope;
@@ -55,7 +66,7 @@ void i18n(int setlang){
 }
 
 
-const char* HELP[] = { ".r {表达式} {鉴定类型(可选)} {DC(可选)}\n   投掷骰子，支持四则运算与括号\n   例如：.r 3d6+d4 伤害 \n   d两侧参数不填时，分别默认为1与100\n   支持coc七版规则奖励骰惩罚骰\n   d^代表一个奖励骰，d__代表两个惩罚骰\n   以此类推，仅对百面骰生效\n.h {表达式} {鉴定类型(可选)} {DC(可选)}\n   暗骰，使用方法同.r，结果会私信通知。\n.c {表达式}\n   计算功能，仅返回结果\n.luck\n   获得今日老黄历" ,""};
+const char* HELP[] = { ".r {表达式} {鉴定类型(可选)} {DC(可选)}\n   投掷骰子，支持四则运算与括号\n   例如：.r 3d6+d4 伤害 \n   d两侧参数不填时，分别默认为1与100\n   支持coc七版规则奖励骰惩罚骰\n   d~代表一个奖励骰，d__代表两个惩罚骰\n   以此类推，仅对百面骰生效\n.h {表达式} {鉴定类型(可选)} {DC(可选)}\n   暗骰，使用方法同.r，结果会私信通知。\n.c {表达式}\n   计算功能，仅返回结果\n.luck\n   获得今日老黄历\n.l 自定义测试\n   详情请输入.l ?查询" ,""};
 
 const char* LUCK[][2] = { {"诸事皆宜：天然20自动成功！","诸事不宜：骰娘恨你"} ,{ "开团：传奇由此开始", "开团：听取咕声一片" }, { "长团再开：重拾旧时的回忆", "长团再开：上回说到哪来着？" }, { "新建角色卡：属性全是18", "新建角色卡：造出的角色厄运缠身" }, { "写模组：文思泉涌", "写模组：不小心在第一页写上了最终boss是谁" }, { "侦查：黑暗视觉，无所畏惧", "侦查：我看到你们了......吗？" }, { "隐蔽：根据相关法律法规和政策，部分潜行调查员未予显示。", "隐蔽：你藏的挺好的...直到被别人踩了一脚叫出声来。" }, { "说服NPC：唬骗！唬骗！唬骗！", "说服NPC：我觉得你挺可疑的。" }, { "掀桌：破坏模组结构是一种艺术", "掀桌：你的卡可能会被撕，还有你的，还有你的……" }, { "踢门：开门！自由贸易！", "踢门：脚疼" }, { "解谜：现实灵感大成功", "解谜：会把KP急死" }, { "粉红展开：噫~", "粉红展开：吁~" }, { "SAN CHECK：IT'S A GOOD DAY TO DIE", "SAN CHECK：角色没事，PL先疯了" }, { "基础值判定：图书馆失败了，非要在俄语上大成功有什么用啊！", "判定熟练技能：飞龙骑脸怎么输！" }, { "卖队友：在朋友和撬棍中，我选择周杰伦老师。", "卖队友：你才是被卖的那一个" }, { "立FLAG：即便如此，我们也...!", "立FLAG：等我干完这一票，我就回老家结婚。" }, { "保守秘密：到模组结束也没人发现", "保守秘密：你刚才想悄悄告诉我啥来着你再大声点说一遍？" }, { "分头行动：探索效率翻倍", "分头行动：才不要和你们这些疯子待在一起！我要一个人走！" }, { "逃跑：这叫战略转进", "逃跑：后面其实更危险" }, { "孤注一掷：这就是我最后的波纹了！JOJO！", "孤注一掷：作死才能推动剧情发展，剧情确实发展了，但不是你想的那样。" }, { "安利新人：新人入坑比你还深", "安利新人：“都多大了还玩这个？”" } };
 
@@ -236,9 +247,9 @@ CQEVENT(int32_t, __eventPrivateMsg, 24)(int32_t subType, int32_t sendTime, int64
 				if (!args.empty()){
 					if (lang == CN){
 						
-						res = "你对";
+						res = "你对 ";
 						res += args.front();
-						res += "检定骰出了";
+						res += " 检定骰出了 ";
 						res += val;
 					}
 					else if (lang == EN){
@@ -270,7 +281,7 @@ CQEVENT(int32_t, __eventPrivateMsg, 24)(int32_t subType, int32_t sendTime, int64
 						else if (result < dc / 2){
 							res.append("困难成功");
 						}
-						else if (result < dc){
+						else if (result <= dc){
 							res.append("成功");
 						}
 						else{
@@ -383,6 +394,11 @@ CQEVENT(int32_t, __eventGroupMsg, 36)(int32_t subType, int32_t sendTime, int64_t
 			if (strcmp(args.front(), "?") == 0 || strcmp(args.front(), "help") == 0){
 				res.append(HELP[lang]);
 			}
+			else if (strcmp(args.front(), "l") == 0) {
+				args.pop_front();
+				res = at + randomCommand(fromGroup, args);
+
+			}
 			else if (strcmp(args.front(), "r") == 0 || strcmp(args.front(), "roll") == 0){
 				args.pop_front();
 				string val;
@@ -415,7 +431,7 @@ CQEVENT(int32_t, __eventGroupMsg, 36)(int32_t subType, int32_t sendTime, int64_t
 				res.append(val);
 				if (!args.empty()){
 					if (lang == CN){
-						res = at + "对" + args.front() + "检定骰出了" + val;
+						res = at + "对 " + args.front() + " 检定骰出了 " + val;
 					}
 					else if (lang == EN){
 						res = at + " got " + val + " for " + args.front();
@@ -446,7 +462,7 @@ CQEVENT(int32_t, __eventGroupMsg, 36)(int32_t subType, int32_t sendTime, int64_t
 						else if (result < dc / 5){
 							res.append("困难成功");
 						}
-						else if (result < dc){
+						else if (result <= dc){
 							res.append("成功");
 						}
 						else{
@@ -527,9 +543,9 @@ CQEVENT(int32_t, __eventGroupMsg, 36)(int32_t subType, int32_t sendTime, int64_t
 				res.append(val);
 				if (!args.empty()){
 					if (lang == CN){
-						res = "你对";
+						res = "你对 ";
 						res += args.front();
-						res += "检定骰出了";
+						res += " 检定骰出了";
 						res += val;
 					}
 					else if (lang == EN){
@@ -561,7 +577,7 @@ CQEVENT(int32_t, __eventGroupMsg, 36)(int32_t subType, int32_t sendTime, int64_t
 						else if (result < dc/2){
 							res.append("困难成功");
 						}
-						else if (result < dc){
+						else if (result <= dc){
 							res.append("成功");
 						}
 						else{
@@ -720,7 +736,7 @@ CQEVENT(int32_t, __eventDiscussMsg, 32)(int32_t subType, int32_t sendTime, int64
 				res.append(val);
 				if (!args.empty()){
 					if (lang == CN){
-						res = at + "对" + args.front() + "检定骰出了" + val;
+						res = at + "对 " + args.front() + " 检定骰出了 " + val;
 					}
 					else if (lang == EN){
 						res = at + " got " + val + " for " + args.front();
@@ -751,7 +767,7 @@ CQEVENT(int32_t, __eventDiscussMsg, 32)(int32_t subType, int32_t sendTime, int64
 						else if (result < dc / 5){
 							res.append("困难成功");
 						}
-						else if (result < dc){
+						else if (result <= dc){
 							res.append("成功");
 						}
 						else{
@@ -832,9 +848,9 @@ CQEVENT(int32_t, __eventDiscussMsg, 32)(int32_t subType, int32_t sendTime, int64
 				res.append(val);
 				if (!args.empty()){
 					if (lang == CN){
-						res = "你对";
+						res = "你对 ";
 						res += args.front();
-						res += "检定骰出了";
+						res += " 检定骰出了";
 						res += val;
 					}
 					else if (lang == EN){
@@ -866,7 +882,7 @@ CQEVENT(int32_t, __eventDiscussMsg, 32)(int32_t subType, int32_t sendTime, int64
 						else if (result < dc / 2){
 							res.append("困难成功");
 						}
-						else if (result < dc){
+						else if (result <= dc){
 							res.append("成功");
 						}
 						else{
@@ -1000,7 +1016,7 @@ public:
 	const char opename;
 	const int ad; //优先级
 	void(*cal)(calNode*);
-	(calNode*)(*btree)(calNode*);
+	calNode* (*btree)(calNode*);
 	bool rUnary;
 	bool lUnary;
 };
@@ -1058,6 +1074,7 @@ void opeInit(){
 		node->num = node->rightChild->num;
 		node->expression = node->rightChild->expression;
 	}, [](calNode* node)->calNode*{
+		if(node != NULL) "Syntax Error";
 		return NULL;
 	} };
 	opes['+'] = new ope{ '+', 2, [](calNode* node)->void{
@@ -1141,7 +1158,41 @@ void opeInit(){
 		node->parent = newnode;
 		return newnode;
 	}, false, false };
-	opes['d'] = new ope{ 'd', 5, [](calNode* node)->void{
+	opes['%'] = new ope{ '%', 4, [](calNode* node)->void {
+		if (node->rightChild == NULL || node->leftChild == NULL) throw "Syntax Error";
+		if (node->rightChild->num != 0) {
+			if (node->leftChild->num - (int)node->leftChild->num > EPS || node->rightChild->num - (int)node->rightChild->num > EPS) throw "Number Error";
+			node->num = (int)node->leftChild->num % (int)node->rightChild->num;
+		}
+		else throw "Divided By 0";
+		node->expression = node->leftChild->expression + "%" + node->rightChild->expression;
+	}, [](calNode* node)->calNode* {
+		if (node->parent == NULL) throw "Syntax Error";
+		calNode* newnode = new calNode();
+		newnode->leftChild = node;
+		newnode->parent = node->parent;
+		node->parent->rightChild = newnode;
+		newnode->ope = opes['%'];
+		node->parent = newnode;
+		return newnode;
+	}, false, false };
+	opes['^'] = new ope{ '^', 5, [](calNode* node)->void {\
+		if (node->rightChild == NULL || node->leftChild == NULL) throw "Syntax Error";
+		errno = 0;
+		node->num = pow(node->leftChild->num, node->rightChild->num);
+		if(errno != 0) throw "Number Error";
+		node->expression = node->leftChild->expression + "^" + node->rightChild->expression;
+	}, [](calNode* node)->calNode* {
+		if (node->parent == NULL) throw "Syntax Error";
+		calNode* newnode = new calNode();
+		newnode->leftChild = node;
+		newnode->parent = node->parent;
+		node->parent->rightChild = newnode;
+		newnode->ope = opes['^'];
+		node->parent = newnode;
+		return newnode;
+	}, false, false };
+	opes['d'] = new ope{ 'd', 7, [](calNode* node)->void{
 		int left = 1;
 		int right = 100;
 		if (node->leftChild != NULL) left = (int)floor(node->leftChild->num);
@@ -1239,7 +1290,52 @@ void opeInit(){
 			return newnode;
 		}
 	}, true, true };
-	opes['^'] = new ope{ '^', 0, [](calNode* node)->void{assert(false); }, [](calNode* node)->calNode*{
+	opes['c'] = new ope{ 'c', 6, [](calNode* node)->void{
+		int left = 1;
+		if (node->leftChild != NULL) left = (int)floor(node->leftChild->num);
+		if (left <= 0 || left > maxDice)throw "Wrong Dice Number";
+		double rnum = 0;
+		node->expression.append("(");
+		for (int i = 0; i < left; i++){
+			int rdice = ranInt(0, 1);
+			node->expression.append(to_string(rdice));
+			rnum += rdice;
+			node->expression.append("+");
+		}
+		node->expression.pop_back();
+		node->expression.append(")");
+		node->num = rnum;
+		
+	}, [](calNode* node)->calNode*{
+		if (node->ope == NULL || !opes['c']->rUnary){
+			if (node->parent == NULL) throw "Syntax Error";
+			calNode* newnode = new calNode();
+			newnode->leftChild = node;
+			newnode->parent = node->parent;
+			node->parent->rightChild = newnode;
+			newnode->ope = opes['c'];
+			node->parent = newnode;
+			return newnode;
+		}
+		else if (node->rightChild != NULL || node->ope->lUnary){
+			if (node->parent == NULL) throw "Syntax Error";
+			calNode* newnode = new calNode();
+			newnode->leftChild = node;
+			newnode->parent = node->parent;
+			node->parent->rightChild = newnode;
+			newnode->ope = opes['c'];
+			node->parent = newnode;
+			return newnode;
+		}
+		else{
+			calNode* newnode = new calNode();
+			node->rightChild = newnode;
+			newnode->parent = node;
+			newnode->ope = opes['c'];
+			return newnode;
+		}
+	}, true, true };
+	opes['~'] = new ope{ '~', 0, [](calNode* node)->void{assert(false); }, [](calNode* node)->calNode*{
 		if (node->ope != opes['d'] || node->rightChild != NULL) throw "Syntax Error";
 		node->ap++;
 		return node;
@@ -1388,6 +1484,258 @@ double calD(char* arg, string &p){
 		while (p.back() == '0') p.pop_back();
 	}
 	return result;
+}
+
+string addCommand(redisclient::RedisSyncClient &redis, int64_t fromGroup, string command, list<string> options) {
+	if (command.find('.') != string::npos) return "Don't use '.' in command.";
+	redisclient::RedisValue result;
+	result = redis.command("sadd", { to_string(fromGroup), command });
+	if (result.isError()) throw "Data Error";
+	if (result.toInt() == 0) return "Command already exists. If you want to add options, use .l " + command + " add [options]";
+	while (!options.empty()) {
+		redis.command("rpush", { to_string(fromGroup) + "." + command , options.front() });
+		options.erase(options.begin());
+	}
+	return "Command added.";
+}
+
+string delCommand(redisclient::RedisSyncClient &redis, int64_t fromGroup, string command) {
+	if (command.find('.') != string::npos) return "Don't use '.' in command.";
+	redisclient::RedisValue result;
+	result = redis.command("srem", { to_string(fromGroup) , command });
+	if (result.isError()) throw "Data Error";
+	if (result.toInt() == 0) return "Command doesn't exist.";
+	redis.command("del", { to_string(fromGroup) + "." + command });
+	return "Command deleted.";
+}
+
+string addOption(redisclient::RedisSyncClient &redis, int64_t fromGroup, string command, list<string> options) {
+	if (command.find('.') != string::npos) return "Command doesn't exist.";
+	redisclient::RedisValue result;
+	result = redis.command("sismember", { to_string(fromGroup) , command });
+	if (result.isError()) throw "Data Error";
+	if (result.toInt() == 0) return "Command doesn't exist. If you want to add command, use .l add " + command + " [options]";
+	while (!options.empty()) {
+		redis.command("rpush", { to_string(fromGroup) + "." + command , options.front() });
+		options.erase(options.begin());
+	}
+	return "Options added.";
+}
+
+string delOption(redisclient::RedisSyncClient &redis, int64_t fromGroup, string command, int index) {
+	if (command.find('.') != string::npos) return "Command doesn't exist.";
+	redisclient::RedisValue result;
+	result = redis.command("sismember", { to_string(fromGroup) , command });
+	if (result.isError()) throw "Data Error";
+	if (result.toInt() == 0) return "Command doesn't exist.";
+	result = redis.command("llen", { to_string(fromGroup) + "." + command });
+	if (result.isError()) throw "Data Error";
+	if (result.toInt() < index) return "Out of Range";
+	int len = result.toInt();
+	vector<string> temp;
+	while (len > index) {
+		result = redis.command("rpop", { to_string(fromGroup) + "." + command });
+		temp.push_back(result.toString());
+		len--;
+	}
+	redis.command("rpop", { to_string(fromGroup) + "." + command });
+	while (!temp.empty()) {
+		result = redis.command("rpush", { to_string(fromGroup) + "." + command , temp.back() });
+		temp.pop_back();
+	}
+	if (len == 1) {
+		redis.command("srem", { to_string(fromGroup) , command });
+	}
+	return "Option deleted.";
+}
+
+string setOption(redisclient::RedisSyncClient &redis, int64_t fromGroup, string command, int index, string option) {
+	if (command.find('.') != string::npos) return "Command doesn't exist.";
+	redisclient::RedisValue result;
+	result = redis.command("sismember", { to_string(fromGroup) , command });
+	if (result.isError()) throw "Data Error";
+	if (result.toInt() == 0) return "Command doesn't exist.";
+	result = redis.command("llen", { to_string(fromGroup) + "." + command });
+	if (result.isError()) throw "Data Error";
+	if (result.toInt() < index || index <= 0) return "Out of Range";
+	result = redis.command("lset", { to_string(fromGroup) + "." + command , to_string(index - 1), option });
+	return "Option changed.";
+}
+
+string getRandomOption(redisclient::RedisSyncClient &redis, int64_t fromGroup, string command) {
+	int index = 0;
+	if (command.find('.') != string::npos) return "Command doesn't exist.";
+	redisclient::RedisValue result;
+	result = redis.command("sismember", { to_string(fromGroup) , command });
+	if (result.isError()) throw "Data Error";
+	if (result.toInt() == 0) return "Command doesn't exist.";
+	result = redis.command("llen", { to_string(fromGroup) + "." + command });
+	if (result.isError()) throw "Data Error";
+	index = ranInt(1, result.toInt());
+	result = redis.command("lindex", { to_string(fromGroup) + "." + command , to_string(index - 1) });
+	return result.toString();
+}
+
+vector<string> showAllOption(redisclient::RedisSyncClient &redis, int64_t fromGroup, string command) {
+	if (command.find('.') != string::npos) return {};
+	redisclient::RedisValue result;
+	result = redis.command("sismember", { to_string(fromGroup) , command });
+	if (result.isError()) throw "Data Error";
+	if (result.toInt() == 0) return {};
+	result = redis.command("lrange", { to_string(fromGroup) + "." + command , "0", "-1" });
+	if (result.isError() || !result.isArray()) throw "Data Error";
+	vector<redisclient::RedisValue> resultArray = result.toArray();
+	vector<string> stringArray;
+	while (!resultArray.empty()) {
+		stringArray.push_back(resultArray.front().toString());
+		resultArray.erase(resultArray.begin());
+	}
+	return stringArray;
+}
+
+vector<string> showAllCommand(redisclient::RedisSyncClient &redis, int64_t fromGroup) {
+	redisclient::RedisValue result;
+	result = redis.command("exists", { to_string(fromGroup) });
+	if (result.toInt() == 0) return {};
+	result = redis.command("scard", { to_string(fromGroup) });
+	if (result.isError() || !result.isInt()) {
+		redis.command("del", { to_string(fromGroup) });
+		throw "Data Error";
+	}
+	int len = result.toInt();
+	result = redis.command("smembers", { to_string(fromGroup) });
+	if (!result.isArray()) throw "Data Error";
+	vector<redisclient::RedisValue> resultArray = result.toArray();
+	vector<string> stringArray;
+	while (!resultArray.empty()) {
+		stringArray.push_back(resultArray.front().toString());
+		resultArray.erase(resultArray.begin());
+	}
+	return stringArray;
+}
+
+string randomCommand(int64_t fromGroup, list<char*> args1) {
+	boost::asio::io_service ioService;
+	boost::asio::ip::tcp::endpoint endpoint(server_address, server_port);
+	redisclient::RedisSyncClient redis(ioService);
+	string ec;
+	if (!redis.connect(endpoint, ec))
+	{
+		return "连接数据库失败";
+	}
+	list<string> args;
+	if (args1.empty()) args.push_back("?");
+	while (!args1.empty()) {
+		args.push_back(args1.front());
+		args1.pop_front();
+	}
+		try {
+			if (args.front() == "?" || args.front() == "help") {
+				return "使用.l命令可以自定义枚举随机测试。\n首先使用.l add [测试名] [测试项1] [测试项2]... 新增测试\n随后用.l [测试名]进行测试。\n.l的指令包括:\n.l list 列出现有所有测试\n.l add [测试名] [测试项1] [测试项2] ...新增测试\n.l del [测试名] 删除测试\n.l [测试名] 进行测试\n.l [测试名] list 列出已有测试的所有测试项\n.l [测试名] add [测试项1] [测试项2]... 在已有测试里新增测试项\n.l [测试名] del [测试项编号] 删除某一测试项\n.l [测试名] set [测试项编号] [测试项内容] 将已经存在的某一测试项更改为其他内容";
+			}
+			else if (args.front() == "add") {
+				args.pop_front();
+				if (args.size() > 1) {
+					string command = args.front();
+					args.pop_front();
+					return addCommand(redis, fromGroup, command, args);
+				}
+				else {
+					return "参数错误";
+				}
+			}
+			else if (args.front() == "del") {
+				args.pop_front();
+				if (args.size() == 1) {
+					string command = args.front();
+					args.pop_front();
+					return delCommand(redis, fromGroup, command);
+				}
+				else {
+					return "参数错误";
+				}
+			}
+			else if (args.front() == "list") {
+				args.pop_front();
+				if (args.size() == 0) {
+					vector<string> commands = showAllCommand(redis, fromGroup);
+					string value;
+					value = "已经添加的自定义测试项：\n";
+					while (!commands.empty()) {
+						value = value + commands.front() + "\n";
+						commands.erase(commands.begin());
+					}
+					value.pop_back();
+					return value;
+				}
+				else {
+					return "参数错误";
+				}
+			}
+			else {
+				string command = args.front();
+				args.pop_front();
+				if (args.front() == "add") {
+					args.pop_front();
+					if (args.size() > 0) {
+						return addOption(redis, fromGroup, command, args);
+					}
+					else {
+						return "参数错误";
+					}
+				}
+				else if (args.front() == "del") {
+					args.pop_front();
+					if (args.size() == 1) {
+						string index = args.front();
+						return delOption(redis, fromGroup, command, stoi(index));
+					}
+					else {
+						return "参数错误";
+					}
+				}
+				else if (args.front() == "get") {
+					args.pop_front();
+					if (args.size() == 1) {
+						string index = args.front();
+						return getRandomOption(redis, fromGroup, command);
+					}
+					else {
+						return "参数错误";
+					}
+				}
+				else if (args.front() == "list") {
+					args.pop_front();
+					if (args.size() == 0) {
+						vector<string> commands = showAllOption(redis, fromGroup, command);
+						string value = "[" + command + "]总共包括以下选项：\n";
+						for (int i = 0; i < commands.size(); i++) {
+							value = value + to_string(i+1) + "." + commands[i] + "\n";
+						}
+						value.pop_back();
+						return value;
+					}
+					else {
+						return "参数错误";
+					}
+				}
+				else if (args.empty()) {
+					return getRandomOption(redis, fromGroup, command);
+				}
+				else {
+					return "对 " + args.front() + " 测出 " + getRandomOption(redis, fromGroup, command);
+				}
+			}
+		}
+		catch (invalid_argument e) {
+			return "非法参数";
+		}
+		catch (out_of_range e) {
+			return "数字过大";
+		}
+		catch (string e) {
+			return e;
+		}
 }
 
 void randomCoC7(string &p){

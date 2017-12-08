@@ -28,4 +28,9 @@
 #include <map>
 #include <stdio.h>
 #include <stdlib.h>
-#include <string.h>
+#include <errno.h>
+#include "boost/asio/io_service.hpp"  
+#include "boost/asio/ip/address.hpp"  
+#include "redisclient/redissyncclient.h"  
+#include "redisclient/redisasyncclient.h" 
+using namespace std;
