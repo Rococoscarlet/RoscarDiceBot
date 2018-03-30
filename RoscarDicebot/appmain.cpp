@@ -37,6 +37,12 @@ string getRandomOption(redisclient::RedisSyncClient &redis, int64_t fromGroup, s
 vector<string> showAllOption(redisclient::RedisSyncClient &redis, int64_t fromGroup, string command);
 vector<string> showAllCommand(redisclient::RedisSyncClient &redis, int64_t fromGroup);
 string randomCommand(int64_t fromGroup, list<char*> args1);
+string addGroupNick(redisclient::RedisSyncClient &redis, int64_t fromGroup, string nick, bool isGroup);
+string delGroupNick(redisclient::RedisSyncClient &redis, int64_t fromGroup, string nick, bool isGroup);
+vector<string> listGroupNick(redisclient::RedisSyncClient &redis, int64_t fromGroup, bool isGroup);
+int64_t getNickGroup(redisclient::RedisSyncClient &redis, string nick, bool &isGroup);
+string anonymousNick(int64_t fromGroup, list<char*> args1, bool isGroup);
+string anonymous(list<char*> &args1, int64_t &toGroup, bool &isGroup);
 
 class calNode;
 class ope;
@@ -66,7 +72,7 @@ void i18n(int setlang){
 }
 
 
-const char* HELP[] = { ".r {表达式} {鉴定类型(可选)} {DC(可选)}\n   投掷骰子，支持四则运算与括号\n   例如：.r 3d6+d4 伤害 \n   d两侧参数不填时，分别默认为1与100\n   支持coc七版规则奖励骰惩罚骰\n   d~代表一个奖励骰，d__代表两个惩罚骰\n   以此类推，仅对百面骰生效\n.h {表达式} {鉴定类型(可选)} {DC(可选)}\n   暗骰，使用方法同.r，结果会私信通知。\n.c {表达式}\n   计算功能，仅返回结果\n.luck\n   获得今日老黄历\n.l 自定义测试\n   详情请输入.l ?查询" ,""};
+const char* HELP[] = { ".r {表达式} {鉴定类型(可选)} {DC(可选)}\n   投掷骰子，支持四则运算与括号\n   例如：.r 3d6+d4 伤害 \n   d两侧参数不填时，分别默认为1与100\n   支持coc七版规则奖励骰惩罚骰\n   d~代表一个奖励骰，d__代表两个惩罚骰\n   以此类推，仅对百面骰生效\n.h {表达式} {鉴定类型(可选)} {DC(可选)}\n   暗骰，使用方法同.r，结果会私信通知。\n.c {表达式}\n   计算功能，仅返回结果\n.luck\n   获得今日老黄历\n.l 自定义测试\n   详情请输入.l ?查询\n.n 发送匿名消息\n   详情请输入.n ?查询" ,""};
 
 const char* LUCK[][2] = { {"诸事皆宜：天然20自动成功！","诸事不宜：骰娘恨你"} ,{ "开团：传奇由此开始", "开团：听取咕声一片" }, { "长团再开：重拾旧时的回忆", "长团再开：上回说到哪来着？" }, { "新建角色卡：属性全是18", "新建角色卡：造出的角色厄运缠身" }, { "写模组：文思泉涌", "写模组：不小心在第一页写上了最终boss是谁" }, { "侦查：黑暗视觉，无所畏惧", "侦查：我看到你们了......吗？" }, { "隐蔽：根据相关法律法规和政策，部分潜行调查员未予显示。", "隐蔽：你藏的挺好的...直到被别人踩了一脚叫出声来。" }, { "说服NPC：唬骗！唬骗！唬骗！", "说服NPC：我觉得你挺可疑的。" }, { "掀桌：破坏模组结构是一种艺术", "掀桌：你的卡可能会被撕，还有你的，还有你的……" }, { "踢门：开门！自由贸易！", "踢门：脚疼" }, { "解谜：现实灵感大成功", "解谜：会把KP急死" }, { "粉红展开：噫~", "粉红展开：吁~" }, { "SAN CHECK：IT'S A GOOD DAY TO DIE", "SAN CHECK：角色没事，PL先疯了" }, { "基础值判定：图书馆失败了，非要在俄语上大成功有什么用啊！", "判定熟练技能：飞龙骑脸怎么输！" }, { "卖队友：在朋友和撬棍中，我选择周杰伦老师。", "卖队友：你才是被卖的那一个" }, { "立FLAG：即便如此，我们也...!", "立FLAG：等我干完这一票，我就回老家结婚。" }, { "保守秘密：到模组结束也没人发现", "保守秘密：你刚才想悄悄告诉我啥来着你再大声点说一遍？" }, { "分头行动：探索效率翻倍", "分头行动：才不要和你们这些疯子待在一起！我要一个人走！" }, { "逃跑：这叫战略转进", "逃跑：后面其实更危险" }, { "孤注一掷：这就是我最后的波纹了！JOJO！", "孤注一掷：作死才能推动剧情发展，剧情确实发展了，但不是你想的那样。" }, { "安利新人：新人入坑比你还深", "安利新人：“都多大了还玩这个？”" } };
 
@@ -214,6 +220,25 @@ CQEVENT(int32_t, __eventPrivateMsg, 24)(int32_t subType, int32_t sendTime, int64
 			if (strcmp(args.front(), "?") == 0 || strcmp(args.front(), "help") == 0){
 				res.append(HELP[lang]);
 			}
+			else if (strcmp(args.front(), "n") == 0) {
+				args.pop_front();
+				int64_t toGroup = 0;
+				bool isGroup;
+				string anmsg = "@";
+				anmsg = anmsg + args.front() + ": ";
+				res = anonymous(args, toGroup, isGroup);
+				if (!args.empty()) {
+					while (!args.empty()) {
+						anmsg = anmsg + args.front() + " ";
+						args.pop_front();
+					}
+					anmsg.pop_back();
+					if (toGroup != 0) {
+						if (isGroup) CQ_sendGroupMsg(ac, toGroup, anmsg.data());
+						else CQ_sendDiscussMsg(ac, toGroup, anmsg.data());
+					}
+				}
+			}
 			else if (strcmp(args.front(), "r") == 0){
 				string val;
 				double result = 0;
@@ -275,10 +300,10 @@ CQEVENT(int32_t, __eventPrivateMsg, 24)(int32_t subType, int32_t sendTime, int64
 						if (result == 1){
 							res.append("大成功"); 
 						}
-						else if (result < dc / 5){
+						else if (result <= dc / 5){
 							res.append("极难成功");
 						}
-						else if (result < dc / 2){
+						else if (result <= dc / 2){
 							res.append("困难成功");
 						}
 						else if (result <= dc){
@@ -399,6 +424,10 @@ CQEVENT(int32_t, __eventGroupMsg, 36)(int32_t subType, int32_t sendTime, int64_t
 				res = at + randomCommand(fromGroup, args);
 
 			}
+			else if (strcmp(args.front(), "n") == 0) {
+				args.pop_front();
+				res = at + anonymousNick(fromGroup,args,TRUE);
+			}
 			else if (strcmp(args.front(), "r") == 0 || strcmp(args.front(), "roll") == 0){
 				args.pop_front();
 				string val;
@@ -456,10 +485,10 @@ CQEVENT(int32_t, __eventGroupMsg, 36)(int32_t subType, int32_t sendTime, int64_t
 						if (result == 1){
 							res.append("大成功");
 						}
-						else if (result < dc / 5){
+						else if (result <= dc / 5){
 							res.append("极难成功");
 						}
-						else if (result < dc / 5){
+						else if (result <= dc / 5){
 							res.append("困难成功");
 						}
 						else if (result <= dc){
@@ -571,10 +600,10 @@ CQEVENT(int32_t, __eventGroupMsg, 36)(int32_t subType, int32_t sendTime, int64_t
 						if (result == 1){
 							res.append("大成功");
 						}
-						else if (result < dc/5){
+						else if (result <= dc/5){
 							res.append("极难成功");
 						}
-						else if (result < dc/2){
+						else if (result <= dc/2){
 							res.append("困难成功");
 						}
 						else if (result <= dc){
@@ -704,6 +733,10 @@ CQEVENT(int32_t, __eventDiscussMsg, 32)(int32_t subType, int32_t sendTime, int64
 			if (strcmp(args.front(), "?") == 0 || strcmp(args.front(), "help") == 0){
 				res.append(HELP[lang]);
 			}
+			else if (strcmp(args.front(), "n") == 0) {
+				args.pop_front();
+				res = at + anonymousNick(fromDiscuss, args, FALSE);
+			}
 			else if (strcmp(args.front(), "r") == 0 || strcmp(args.front(), "roll") == 0){
 				args.pop_front();
 				string val;
@@ -761,10 +794,10 @@ CQEVENT(int32_t, __eventDiscussMsg, 32)(int32_t subType, int32_t sendTime, int64
 						if (result == 1){
 							res.append("大成功");
 						}
-						else if (result < dc / 5){
+						else if (result <= dc / 5){
 							res.append("极难成功");
 						}
-						else if (result < dc / 5){
+						else if (result <= dc / 2){
 							res.append("困难成功");
 						}
 						else if (result <= dc){
@@ -1486,6 +1519,199 @@ double calD(char* arg, string &p){
 	return result;
 }
 
+string addGroupNick(redisclient::RedisSyncClient &redis, int64_t fromGroup, string nick, bool isGroup) {
+	redisclient::RedisValue result;
+	if(isGroup) result = redis.command("setnx", { "n." + nick, to_string(fromGroup) });
+	else result = redis.command("setnx", { "n." + nick, "d" + to_string(fromGroup) });
+	if (result.isError()) throw "Data Error";
+	if (result.toInt() == 0) {
+		result = redis.command("get", { "n." + nick });
+		if (result.isString()) {
+			if (isGroup) {
+				if (to_string(fromGroup) != result.toString()) return "Nick already used by other group.";
+				else return "Nick existed.";
+			}
+			else {
+				if ("d" + to_string(fromGroup) != result.toString()) return "Nick already used by other group.";
+				else return "Nick existed.";
+			}
+		}
+		else return "Data Type Error";
+	}
+	if (isGroup) result = redis.command("sadd", { "ngp." + to_string(fromGroup), nick });
+	else result = redis.command("sadd", { "ngpd." + to_string(fromGroup), nick });
+	return "Nick added.";
+}
+
+string delGroupNick(redisclient::RedisSyncClient &redis, int64_t fromGroup, string nick, bool isGroup) {
+	redisclient::RedisValue result;
+	result = redis.command("get", { "n." + nick});
+	if (result.isError()) throw "Data Error";
+	if (result.isString()) {
+		if (isGroup) {
+			if (to_string(fromGroup) != result.toString()) return "Cannot delete nickname of other group.";
+			else result = redis.command("del", { "n." + nick });
+		}
+		else {
+			if ("d" + to_string(fromGroup) != result.toString()) return "Cannot delete nickname of other group.";
+			else result = redis.command("del", { "n." + nick });
+		}
+	} else return "Data doesnot exist";
+	if (isGroup) result = redis.command("srem", { "ngp." + to_string(fromGroup), nick });
+	else result = redis.command("srem", { "ngpd." + to_string(fromGroup), nick });
+	return "Nick deleted.";
+}
+
+vector<string> listGroupNick(redisclient::RedisSyncClient &redis, int64_t fromGroup, bool isGroup) {
+	redisclient::RedisValue result;
+	if (isGroup) result = redis.command("smembers", { "ngp." + to_string(fromGroup)});
+	else result = redis.command("smembers", { "ngpd." + to_string(fromGroup) });
+	if (result.isError()) throw "Data Error";
+	if (result.isArray()) {
+		vector<redisclient::RedisValue> resultArray = result.toArray();
+		vector<string> stringArray;
+		while (!resultArray.empty()) {
+			stringArray.push_back(resultArray.front().toString());
+			resultArray.erase(resultArray.begin());
+		}
+		return stringArray;
+	}
+	else throw "Data Type Error";
+	return {};
+}
+
+int64_t getNickGroup(redisclient::RedisSyncClient &redis, string nick, bool &isGroup) {
+	redisclient::RedisValue result;
+	result = redis.command("get", { "n." + nick });
+	if (result.isError()) throw "Data Error";
+	if (result.isNull()) throw "Nick not Found";
+	string resultString = result.toString();
+	if (resultString.front() == 'd') {
+		isGroup = FALSE;
+		resultString.erase(resultString.begin());
+	}
+	else isGroup = TRUE;
+	return stoll(resultString);
+}
+
+string anonymousNick(int64_t fromGroup, list<char*> args1, bool isGroup) {
+	boost::asio::io_service ioService;
+	boost::asio::ip::tcp::endpoint endpoint(server_address, server_port);
+	redisclient::RedisSyncClient redis(ioService);
+	string ec;
+	if (!redis.connect(endpoint, ec))
+	{
+		return "连接数据库失败";
+	}
+	list<string> args;
+	if (args1.empty()) args.push_back("?");
+	while (!args1.empty()) {
+		args.push_back(args1.front());
+		args1.pop_front();
+	}
+	try {
+		if (args.front() == "?" || args.front() == "help") {
+			return "使用.n命令可以设置匿名昵称，绑定到群。\n私聊骰子使用昵称在对应群内发表匿名消息。\n首先在群内使用.n add [昵称] 绑定昵称到本群。\n随后私聊骰子.n [昵称] [消息内容] 使用该昵称在对应群内发表匿名消息。\n.n群内指令包括:\n.n list 列出绑定到本群的昵称\n.n add [昵称] 绑定该昵称到本群\n.n del [昵称] 解绑本群昵称\n.n私聊指令包括\n.n [昵称] [消息] 使用该昵称在对应群内发表匿名消息";
+		}
+		else if (args.front() == "add") {
+			args.pop_front();
+			if (args.size() >= 1) {
+				string nick = args.front();
+				return addGroupNick(redis, fromGroup, nick, isGroup);
+			}
+			else {
+				return "参数错误";
+			}
+		}
+		else if (args.front() == "del") {
+			args.pop_front();
+			if (args.size() == 1) {
+				string nick = args.front();
+				return delGroupNick(redis, fromGroup, nick, isGroup);
+			}
+			else {
+				return "参数错误";
+			}
+		}
+		else if (args.front() == "list") {
+			args.pop_front();
+			if (args.size() == 0) {
+				vector<string> nicks = listGroupNick(redis, fromGroup, isGroup);
+				string value;
+				value = "绑定到本群的昵称：\n";
+				if (nicks.empty()) {
+					value = "暂无昵称\n";
+				}
+				while (!nicks.empty()) {
+					value = value + nicks.front() + "\n";
+					nicks.erase(nicks.begin());
+				}
+				value.pop_back();
+				return value;
+			}
+			else {
+				return "参数错误";
+			}
+		}
+		else {
+			return "参数错误";
+		}
+	}
+	catch (invalid_argument e) {
+		return "非法参数";
+	}
+	catch (out_of_range e) {
+		return "数字过大";
+	}
+	catch (string e) {
+		return e;
+	}
+	catch (char* e) {
+		return e;
+	}
+}
+
+string anonymous(list<char*> &args1, int64_t &toGroup, bool &isGroup) {
+	boost::asio::io_service ioService;
+	boost::asio::ip::tcp::endpoint endpoint(server_address, server_port);
+	redisclient::RedisSyncClient redis(ioService);
+	string ec;
+	if (!redis.connect(endpoint, ec))
+	{
+		return "连接数据库失败";
+	}
+	list<string> args;
+	if (args1.empty()) args1.push_back("?");
+	args.push_back(args1.front());
+	args1.pop_front();
+	try {
+		if (args.front() == "?" || args.front() == "help") {
+			return "使用.n命令可以设置匿名昵称，绑定到群。\n私聊骰子使用昵称在对应群内发表匿名消息。\n首先在群内使用.n add [昵称] 绑定昵称到本群。\n随后私聊骰子.n [昵称] [消息内容] 使用该昵称在对应群内发表匿名消息。\n.n群内指令包括:\n.n list 列出绑定到本群的昵称\n.n add [昵称] 绑定该昵称到本群\n.n del [昵称] 解绑本群昵称\n.n私聊指令包括\n.n [昵称] [消息] 使用该昵称在对应群内发表匿名消息";
+		}
+		else {
+			if (args.size() >= 1) {
+				toGroup = getNickGroup(redis, args.front(), isGroup);
+				return "成功以" + args.front() + "名义发表消息";
+			}
+			else {
+				return "缺少参数";
+			}
+		}
+	}
+	catch (invalid_argument e) {
+		return "非法参数";
+	}
+	catch (out_of_range e) {
+		return "数字过大";
+	}
+	catch (string e) {
+		return e;
+	}
+	catch (char* e) {
+		return e;
+	}
+}
+
 string addCommand(redisclient::RedisSyncClient &redis, int64_t fromGroup, string command, list<string> options) {
 	if (command.find('.') != string::npos) return "Don't use '.' in command.";
 	redisclient::RedisValue result;
@@ -1531,7 +1757,7 @@ string delOption(redisclient::RedisSyncClient &redis, int64_t fromGroup, string 
 	result = redis.command("llen", { to_string(fromGroup) + "." + command });
 	if (result.isError()) throw "Data Error";
 	if (result.toInt() < index) return "Out of Range";
-	int len = result.toInt();
+	int64_t len = result.toInt();
 	vector<string> temp;
 	while (len > index) {
 		result = redis.command("rpop", { to_string(fromGroup) + "." + command });
@@ -1602,7 +1828,7 @@ vector<string> showAllCommand(redisclient::RedisSyncClient &redis, int64_t fromG
 		redis.command("del", { to_string(fromGroup) });
 		throw "Data Error";
 	}
-	int len = result.toInt();
+	int64_t len = result.toInt();
 	result = redis.command("smembers", { to_string(fromGroup) });
 	if (!result.isArray()) throw "Data Error";
 	vector<redisclient::RedisValue> resultArray = result.toArray();
@@ -1613,6 +1839,8 @@ vector<string> showAllCommand(redisclient::RedisSyncClient &redis, int64_t fromG
 	}
 	return stringArray;
 }
+
+
 
 string randomCommand(int64_t fromGroup, list<char*> args1) {
 	boost::asio::io_service ioService;
@@ -1734,6 +1962,9 @@ string randomCommand(int64_t fromGroup, list<char*> args1) {
 			return "数字过大";
 		}
 		catch (string e) {
+			return e;
+		}
+		catch (char* e) {
 			return e;
 		}
 }
